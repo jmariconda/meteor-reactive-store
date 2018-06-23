@@ -20,89 +20,6 @@ function ensureDepNode(deps, key, initDep) {
     return deps[key];
 }
 
-function triggerDep(dep) {
-    if (dep) dep.changed();
-}
-
-function triggerAllDeps(deps, inObjectOrArray) {
-    if (deps && (inObjectOrArray === undefined || isObject(inObjectOrArray) || Array.isArray(inObjectOrArray))) {
-        for (const key of Object.keys(deps)) {
-            if (!inObjectOrArray || inObjectOrArray.hasOwnProperty(key)) {
-                let inObjectOrArrayAtKey;
-                
-                if (inObjectOrArray) {
-                    inObjectOrArrayAtKey = inObjectOrArray[key] || null;
-                }
-
-                triggerAllDeps(deps[key].subDeps, inObjectOrArrayAtKey);
-                triggerDep(deps[key].dep);
-            }
-        }
-
-        return true;
-    }
-}
-
-function triggerChangedDeps(deps, key, oldValue, newValue) {
-    const depNode = deps && deps[key];
-
-    let changed = false;
-
-    if (typeof oldValue === 'object' && oldValue !== null) {
-        const wasObject = (oldValue.constructor === Object),
-            wasArray = (oldValue.constructor === Array),
-            subDeps = (depNode && depNode.subDeps);
-
-        if (wasObject || wasArray) {
-            // If oldValue is an Object or Array, iterate through its keys/vals and recursively trigger subDeps
-            if (oldValue !== newValue) {
-                // If newValue references a different object, assume that the old reference has not been modified and check for deep changes.
-                if (wasObject && !isObject(newValue)) {
-                    newValue = {};
-                } else if (wasArray && !Array.isArray(newValue)) {
-                    newValue = [];
-                }
-
-                const oldKeys = Object.keys(oldValue);
-
-                if (oldKeys.length) {
-                    // If the old Object/Array was not empty, iterate through its keys and check for deep changes
-                    for (const subKey of oldKeys) {
-                        if (triggerChangedDeps(subDeps, subKey, oldValue[subKey], newValue[subKey])) {
-                            changed = true;
-                        }
-                    }
-
-                } else {
-                    // Otherwise, trigger all subDeps that are now present in newValue
-                    triggerAllDeps(subDeps, newValue);
-                    changed = true;
-                }
-                
-            } else {
-                // If oldValue and newValue share a reference, there is no reliable way to check for changes because keys could have been modified.
-                // In this case, we just trigger the current dep and all subDeps to be safe.
-                triggerAllDeps(subDeps);
-                changed = true;
-            }
-
-        } else {
-            // If none of the above match, we must assume it has changed for lack of a better way to check
-            changed = true;
-        }
-
-    } else {
-        // For primitives or null, just perform basic equivalency check
-        changed = oldValue !== newValue;
-    }
-    
-    if (changed && depNode) {
-        triggerDep(depNode.dep);
-    }
-
-    return changed;
-}
-
 export default class ReactiveStore {
     constructor(initData) {
         this._isObjectOrArray = isObject(initData) || Array.isArray(initData);
@@ -164,14 +81,14 @@ export default class ReactiveStore {
         this.data = value;
 
         if (wasObjectOrArray) {
-            triggerChangedDeps(this._deps, 'root', oldValue, value);
+            this._triggerChangedDeps(this._deps, 'root', oldValue, value);
             
         } else if (typeof oldValue === 'object' || oldValue !== value) {
             if (this._isObjectOrArray) {
-                triggerAllDeps(this._pathDeps, value);
+                this._triggerAllDeps(this._pathDeps, value);
             }
             
-            this._rootDep.changed();
+            this._triggerDep(this._rootDep);
         }
     }
 
@@ -186,11 +103,15 @@ export default class ReactiveStore {
 
         if (isObject(dataOrPath)) {
             // dataOrPath is Object of paths assigned to values
+            this._triggeredDepSet = new Set();
+
             for (const path of Object.keys(dataOrPath)) {
                 this._setAtPath(path, dataOrPath[path]);
             }
 
-        } else if (isNonEmptyString(dataOrPath)) {
+            delete this._triggeredDepSet;
+
+        } else {
             // dataOrPath is a single path to assign
             this._setAtPath(dataOrPath, value);
         }
@@ -199,13 +120,15 @@ export default class ReactiveStore {
     // Iterate through valid paths and unset values
     delete(...paths) {
         // Only run if root data is an Object or Array and paths are available
-        if (this._isObjectOrArray && paths.length) {
-            for (const path of paths) {
-                if (isNonEmptyString(path)) {
-                    this._setAtPath(path, null, { unset: true });
-                }
-            }
+        if (!this._isObjectOrArray) return;
+
+        this._triggeredDepSet = new Set();
+
+        for (const path of paths) {
+            this._setAtPath(path, null, { unset: true });
         }
+
+        delete this._triggeredDepSet;
     }
 
     // Reset root data based on current type
@@ -213,7 +136,6 @@ export default class ReactiveStore {
         if (this._isObjectOrArray) {
             // If root data is an Object or Array, reset it to empty Object/Array respectively
             this.set((this.data.constructor === Object) ? {} : []);
-
         } else {
             // Otherwise, reset root data to undefined
             this.set(undefined);   
@@ -269,10 +191,10 @@ export default class ReactiveStore {
                         // Trigger dep at pathToken and any subDeps it may have
                         if (deps && deps[pathToken]) {
                             if (oldValue) {
-                                triggerAllDeps(deps[pathToken].subDeps, oldValue);
+                                this._triggerAllDeps(deps[pathToken].subDeps, oldValue);
                             }
 
-                            triggerDep(deps[pathToken].dep);
+                            this._triggerDep(deps[pathToken].dep);
                         }
         
                     } else {
@@ -280,19 +202,110 @@ export default class ReactiveStore {
                         search[pathToken] = value;
         
                         // Starting with current dep, traverse down and trigger any deps for changed vals
-                        changed = triggerChangedDeps(deps, pathToken, oldValue, value);
+                        changed = this._triggerChangedDeps(deps, pathToken, oldValue, value);
                     }
         
                     if (changed || !keyExists) {
                         // Trigger any active parent dependencies that were hit (in reverse order to keep dependency trigger order bottom-up)
                         for (let i = parentDeps.length - 1; i >= 0; i--) {
-                            parentDeps[i].changed();
+                            this._triggerDep(parentDeps[i]);
                         }
-
-                        this._rootDep.changed();
+                        
+                        this._triggerDep(this._rootDep);
                     }
                 }
             }
         }
+    }
+
+    _triggerDep(dep) {
+        if (dep) {
+            if (this._triggeredDepSet) {
+                if (this._triggeredDepSet.has(dep)) return;
+
+                this._triggeredDepSet.add(dep);
+            }
+
+            dep.changed();
+        }
+    }
+    
+    _triggerAllDeps(deps, inObjectOrArray) {
+        if (deps && (inObjectOrArray === undefined || isObject(inObjectOrArray) || Array.isArray(inObjectOrArray))) {
+            for (const key of Object.keys(deps)) {
+                if (!inObjectOrArray || inObjectOrArray.hasOwnProperty(key)) {
+                    let inObjectOrArrayAtKey;
+                    
+                    if (inObjectOrArray) {
+                        inObjectOrArrayAtKey = inObjectOrArray[key] || null;
+                    }
+    
+                    this._triggerAllDeps(deps[key].subDeps, inObjectOrArrayAtKey);
+                    this._triggerDep(deps[key].dep);
+                }
+            }
+    
+            return true;
+        }
+    }
+    
+    _triggerChangedDeps(deps, key, oldValue, newValue) {
+        const depNode = deps && deps[key];
+    
+        let changed = false;
+    
+        if (typeof oldValue === 'object' && oldValue !== null) {
+            const wasObject = (oldValue.constructor === Object),
+                wasArray = (oldValue.constructor === Array),
+                subDeps = (depNode && depNode.subDeps);
+    
+            if (wasObject || wasArray) {
+                // If oldValue is an Object or Array, iterate through its keys/vals and recursively trigger subDeps
+                if (oldValue !== newValue) {
+                    // If newValue references a different object, assume that the old reference has not been modified and check for deep changes.
+                    if (wasObject && !isObject(newValue)) {
+                        newValue = {};
+                    } else if (wasArray && !Array.isArray(newValue)) {
+                        newValue = [];
+                    }
+    
+                    const oldKeys = Object.keys(oldValue);
+    
+                    if (oldKeys.length) {
+                        // If the old Object/Array was not empty, iterate through its keys and check for deep changes
+                        for (const subKey of oldKeys) {
+                            if (this._triggerChangedDeps(subDeps, subKey, oldValue[subKey], newValue[subKey])) {
+                                changed = true;
+                            }
+                        }
+    
+                    } else {
+                        // Otherwise, trigger all subDeps that are now present in newValue
+                        this._triggerAllDeps(subDeps, newValue);
+                        changed = true;
+                    }
+                    
+                } else {
+                    // If oldValue and newValue share a reference, there is no reliable way to check for changes because keys could have been modified.
+                    // In this case, we just trigger the current dep and all subDeps to be safe.
+                    this._triggerAllDeps(subDeps);
+                    changed = true;
+                }
+    
+            } else {
+                // If none of the above match, we must assume it has changed for lack of a better way to check
+                changed = true;
+            }
+    
+        } else {
+            // For primitives or null, just perform basic equivalency check
+            changed = oldValue !== newValue;
+        }
+        
+        if (changed && depNode) {
+            this._triggerDep(depNode.dep);
+        }
+    
+        return changed;
     }
 }
