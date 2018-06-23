@@ -1,3 +1,5 @@
+import { Tracker } from 'meteor/tracker';
+
 function isObject(val) {
     return val && typeof val === 'object' && val.constructor === Object;
 }
@@ -32,8 +34,8 @@ function triggerAllDeps(deps, inObjectOrArray) {
                     inObjectOrArrayAtKey = inObjectOrArray[key] || null;
                 }
 
-                triggerDep(deps[key].dep);
                 triggerAllDeps(deps[key].subDeps, inObjectOrArrayAtKey);
+                triggerDep(deps[key].dep);
             }
         }
 
@@ -64,6 +66,7 @@ function triggerChangedDeps(deps, key, oldValue, newValue) {
                 const oldKeys = Object.keys(oldValue);
 
                 if (oldKeys.length) {
+                    // If the old Object/Array was not empty, iterate through its keys and check for deep changes
                     for (const subKey of oldKeys) {
                         if (triggerChangedDeps(subDeps, subKey, oldValue[subKey], newValue[subKey])) {
                             changed = true;
@@ -71,6 +74,7 @@ function triggerChangedDeps(deps, key, oldValue, newValue) {
                     }
 
                 } else {
+                    // Otherwise, trigger all subDeps that are now present in newValue
                     triggerAllDeps(subDeps, newValue);
                     changed = true;
                 }
@@ -100,9 +104,8 @@ function triggerChangedDeps(deps, key, oldValue, newValue) {
 }
 
 export default class ReactiveStore {
-    constructor(initData /* , equalsFunc */) {
+    constructor(initData) {
         this._isObjectOrArray = isObject(initData) || Array.isArray(initData);
-        // this._equalsFunc = (typeof equalsFunc === 'function') ? equalsFunc : null;
         this._deps = {};
         
         ensureDepNode(this._deps, 'root', true);
@@ -160,12 +163,6 @@ export default class ReactiveStore {
         this._isObjectOrArray = isObject(value) || Array.isArray(value);
         this.data = value;
 
-        // if (this._equalsFunc) {
-        //     if (!this._equalsFunc(oldValue, value)) {
-        //         triggerAllDeps(this._deps);
-        //     }
-
-        // } else if (wasObjectOrArray) {
         if (wasObjectOrArray) {
             triggerChangedDeps(this._deps, 'root', oldValue, value);
             
@@ -225,8 +222,8 @@ export default class ReactiveStore {
         const pathSplit = path.split('.'),
             parentDeps = [];
 
-        let search = this.data,
-            deps = this._pathDeps;
+        let deps = this._pathDeps,
+            search = this.data;           
             
         for (let pathIdx = 0, numTokens = pathSplit.length; pathIdx < numTokens; pathIdx++) {
             const pathToken = pathSplit[pathIdx];
@@ -269,11 +266,11 @@ export default class ReactiveStore {
         
                         // Trigger dep at pathToken and any subDeps it may have
                         if (deps && deps[pathToken]) {
-                            triggerDep(deps[pathToken].dep);
-
                             if (oldValue) {
                                 triggerAllDeps(deps[pathToken].subDeps, oldValue);
                             }
+
+                            triggerDep(deps[pathToken].dep);
                         }
         
                     } else {
