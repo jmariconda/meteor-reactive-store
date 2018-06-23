@@ -196,24 +196,26 @@ export default class ReactiveStore {
         }
     }
     
+    // Iterate through valid paths and unset values
     delete(...paths) {
-        if (this._isObjectOrArray) {
-            // Only take paths into account if root value is an Object or Array
-            if (paths.length) {
-                // Iterate through valid paths and unset values
-                for (const path of paths) {
-                    if (isNonEmptyString(path)) {
-                        this._setAtPath(path, null, { unset: true });
-                    }
+        // Only run if root data is an Object or Array and paths are available
+        if (this._isObjectOrArray && paths.length) {
+            for (const path of paths) {
+                if (isNonEmptyString(path)) {
+                    this._setAtPath(path, null, { unset: true });
                 }
-
-            } else {
-                // If no paths are provided, reset root value to empty Object/Array
-                this.set((this.data.constructor === Object) ? {} : []);
             }
+        }
+    }
+
+    // Reset root data based on current type
+    clear() {
+        if (this._isObjectOrArray) {
+            // If root data is an Object or Array, reset it to empty Object/Array respectively
+            this.set((this.data.constructor === Object) ? {} : []);
 
         } else {
-            // If no paths are provided, reset root value to undefined
+            // Otherwise, reset root data to undefined
             this.set(undefined);   
         }
     }
