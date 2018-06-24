@@ -81,7 +81,7 @@ export default class ReactiveStore {
         this.data = value;
 
         if (wasObjectOrArray) {
-            this._triggerChangedDeps(this._deps, 'root', oldValue, value);
+            this._triggerChangedDeps(this._deps.root, oldValue, value);
             
         } else if (typeof oldValue === 'object' || oldValue !== value) {
             if (this._isObjectOrArray) {
@@ -202,7 +202,7 @@ export default class ReactiveStore {
                         search[pathToken] = value;
         
                         // Starting with current dep, traverse down and trigger any deps for changed vals
-                        changed = this._triggerChangedDeps(deps, pathToken, oldValue, value);
+                        changed = this._triggerChangedDeps((deps ? deps[pathToken] : false), oldValue, value);
                     }
         
                     if (changed || !keyExists) {
@@ -249,18 +249,17 @@ export default class ReactiveStore {
         }
     }
     
-    _triggerChangedDeps(deps, key, oldValue, newValue) {
-        const depNode = deps && deps[key];
-    
+    _triggerChangedDeps(depNode, oldValue, newValue) {    
         let changed = false;
     
         if (typeof oldValue === 'object' && oldValue !== null) {
             const wasObject = (oldValue.constructor === Object),
-                wasArray = (oldValue.constructor === Array),
-                subDeps = (depNode && depNode.subDeps);
+                wasArray = (oldValue.constructor === Array);
     
             if (wasObject || wasArray) {
                 // If oldValue is an Object or Array, iterate through its keys/vals and recursively trigger subDeps
+                const subDeps = depNode ? depNode.subDeps : false;
+
                 if (oldValue !== newValue) {
                     // If newValue references a different object, assume that the old reference has not been modified and check for deep changes.
                     if (wasObject && !isObject(newValue)) {
@@ -274,13 +273,15 @@ export default class ReactiveStore {
                     if (oldKeys.length) {
                         // If the old Object/Array was not empty, iterate through its keys and check for deep changes
                         for (const subKey of oldKeys) {
+                            const subDepNode = subDeps ? subDeps[subKey] : false;
+
                             // If we already know that oldValue has changed, only keep traversing if there are unchecked sub-dependencies
                             if (changed) {
                                 if (!subDeps) break;
-                                if (!subDeps[subKey]) continue;
+                                if (!subDepNode) continue;
                             }
 
-                            changed = this._triggerChangedDeps(subDeps, subKey, oldValue[subKey], newValue[subKey]);
+                            changed = this._triggerChangedDeps(subDepNode, oldValue[subKey], newValue[subKey]);
                         }
     
                     } else {
