@@ -20,6 +20,26 @@ function ensureDepNode(deps, key, initDep) {
     return deps[key];
 }
 
+const specialEqChecks = {
+    Set(oldSet, newSet) {
+        let equal = (newSet instanceof Set && newSet.size === oldSet.size);
+
+        if (equal) {
+            for (const val of oldSet.values()) {
+                if (!newSet.has(val)) {
+                    equal = false;
+                    break;
+                }
+            }
+        }
+
+        return equal;
+    },
+    Date(oldDate, newDate) {
+        return (newDate instanceof Date && oldDate.getTime() === newDate.getTime());
+    }
+};
+
 export default class ReactiveStore {
     constructor(initData) {
         this._isObjectOrArray = isObject(initData) || Array.isArray(initData);
@@ -253,8 +273,9 @@ export default class ReactiveStore {
         let changed = false;
     
         if (typeof oldValue === 'object' && oldValue !== null) {
-            const wasObject = (oldValue.constructor === Object),
-                wasArray = (oldValue.constructor === Array);
+            const oldConstructor = oldValue.constructor,
+                wasObject = (oldConstructor === Object),
+                wasArray = (oldConstructor === Array);
     
             if (wasObject || wasArray) {
                 // If oldValue is an Object or Array, iterate through its keys/vals and recursively trigger subDeps
@@ -296,7 +317,11 @@ export default class ReactiveStore {
                     this._triggerAllDeps(subDeps);
                     changed = true;
                 }
-    
+
+            } else if (specialEqChecks[oldConstructor.name]) {
+                // If there is a special-case equality check for the oldValue's instance type (e.g. Set, Date, etc), run that
+                changed = !specialEqChecks[oldConstructor.name](oldValue, newValue);
+
             } else {
                 // If none of the above match, we must assume it has changed for lack of a better way to check
                 changed = true;
