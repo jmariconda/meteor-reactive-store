@@ -55,7 +55,7 @@ describe('ReactiveStore', () => {
                     another: { deep: { field: 1 } }
                 });
                 assert.deepEqual(currentVal, test.data);
-
+                
                 // currentVal should remain unchanged and autorun should not run
                 ran = 0;
 

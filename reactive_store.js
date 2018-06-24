@@ -274,9 +274,13 @@ export default class ReactiveStore {
                     if (oldKeys.length) {
                         // If the old Object/Array was not empty, iterate through its keys and check for deep changes
                         for (const subKey of oldKeys) {
-                            if (this._triggerChangedDeps(subDeps, subKey, oldValue[subKey], newValue[subKey])) {
-                                changed = true;
+                            // If we already know that oldValue has changed, only keep traversing if there are unchecked sub-dependencies
+                            if (changed) {
+                                if (!subDeps) break;
+                                if (!subDeps[subKey]) continue;
                             }
+
+                            changed = this._triggerChangedDeps(subDeps, subKey, oldValue[subKey], newValue[subKey]);
                         }
     
                     } else {
@@ -299,7 +303,7 @@ export default class ReactiveStore {
     
         } else {
             // For primitives or null, just perform basic equivalency check
-            changed = oldValue !== newValue;
+            changed = (oldValue !== newValue);
         }
         
         if (changed && depNode) {
