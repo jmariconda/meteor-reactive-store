@@ -7,7 +7,7 @@ Package.describe({
 });
 
 Package.onUse((api) => {
-    api.use(['tracker', 'ecmascript']);
+    api.use(['tracker@1.2.0', 'ecmascript@0.11.1']);
     api.mainModule('reactive_store.js');
 });
 
