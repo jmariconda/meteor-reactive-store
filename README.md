@@ -2,6 +2,13 @@
 
 Reactive Store is a reactive data type for Meteor that supports deep dependency tracking.
 
+## Installation:
+Add the package:
+> meteor add jmaric:deep-reactive-store
+
+Then in any file:
+> import ReactiveStore from 'meteor/jmaric:deep-reactive-store';
+
 ## Usage:
 - ### new ReactiveStore([initialValue: _any_])
     - Initializes the ReactiveStore with any initial value.
