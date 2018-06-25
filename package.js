@@ -2,6 +2,7 @@ Package.describe({
     summary: 'A reactive store with deep dependency tracking for meteor.',
     version: '1.0.0',
     name: 'jmaric:deep-reactive-store',
+    documentation: 'README.md',
     git: 'https://github.com/jeffm24/meteor-reactive-store.git'
 });
 
