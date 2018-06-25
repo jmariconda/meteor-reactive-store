@@ -275,14 +275,13 @@ export default class ReactiveStore {
         if (typeof oldValue === 'object' && oldValue !== null) {
             const oldConstructor = oldValue.constructor,
                 wasObject = (oldConstructor === Object),
-                wasArray = (oldConstructor === Array),
-                differentRef = (oldValue !== newValue);
+                wasArray = (oldConstructor === Array);
     
             if (wasObject || wasArray) {
                 // If oldValue is an Object or Array, iterate through its keys/vals and recursively trigger subDeps
                 const subDeps = depNode ? depNode.subDeps : false;
 
-                if (differentRef) {
+                if (oldValue !== newValue) {
                     // If newValue references a different object, assume that the old reference has not been modified and check for deep changes.
                     if (wasObject && !isObject(newValue)) {
                         newValue = {};
@@ -319,7 +318,7 @@ export default class ReactiveStore {
                     changed = true;
                 }
 
-            } else if (differentRef && specialEqChecks[oldConstructor.name]) {
+            } else if (oldValue !== newValue && specialEqChecks[oldConstructor.name]) {
                 // If there is a special-case equality check for the oldValue's instance type (e.g. Set, Date, etc), run that
                 changed = !specialEqChecks[oldConstructor.name](oldValue, newValue);
 
