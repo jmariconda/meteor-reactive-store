@@ -101,13 +101,33 @@ export default class ReactiveStore {
         this.data = value;
 
         if (wasObjectOrArray) {
+            // Old root value was previously an Object/Array: check for deep dependency changes
             this._triggerChangedDeps(this._deps.root, oldValue, value);
             
-        } else if (typeof oldValue === 'object' || oldValue !== value) {
+        } else if (typeof oldValue === 'object') {
+            // Old root value was some other class instance...
             if (this._isObjectOrArray) {
+                // Is now an Object/Array: trigger the root dep and all existing deps that are set in the new value
+                this._triggerAllDeps(this._pathDeps, value);
+                this._triggerDep(this._rootDep);
+
+            } else {
+                const eqCheck = specialEqChecks[oldValue.constructor.name];
+
+                if (oldValue === value || !eqCheck || !eqCheck(oldValue, value)) {
+                    // Is now the same reference/doesn't have a special equality check (assumed changed) or does not pass special equality check: trigger root dep
+                    this._triggerDep(this._rootDep);
+                }
+            }
+
+        } else if (oldValue !== value) {
+            // Old root value was a primitive and is not equal to the new value...
+            if (this._isObjectOrArray) {
+                // Is now an Object/Array: trigger all existing deps that are set in the new value
                 this._triggerAllDeps(this._pathDeps, value);
             }
-            
+
+            // Trigger the root dep
             this._triggerDep(this._rootDep);
         }
     }
@@ -302,7 +322,7 @@ export default class ReactiveStore {
                                 if (!subDepNode) continue;
                             }
 
-                            changed = this._triggerChangedDeps(subDepNode, oldValue[subKey], newValue[subKey]);
+                            changed = (this._triggerChangedDeps(subDepNode, oldValue[subKey], newValue[subKey]) || changed);
                         }
     
                     } else {
