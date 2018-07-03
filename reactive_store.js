@@ -55,7 +55,7 @@ export default class ReactiveStore {
 
     get(path) {
         let search = this.data,
-            found = true;
+            validPath = true;
 
         if (isNonEmptyString(path)) {
             const pathTokens = path.split('.');
@@ -75,12 +75,16 @@ export default class ReactiveStore {
                     deps = depNode.subDeps;
                 }
 
-                if (!found) continue;
+                if (validPath) {
+                    if (isObject(search) || Array.isArray(search)) {
+                        search = search[tokenName];
 
-                if (isObject(search) || Array.isArray(search)) {
-                    search = search[tokenName];
-                } else {
-                    found = false;
+                    } else if (Tracker.active) {
+                        validPath = false;
+
+                    } else {
+                        return;
+                    }
                 }
             }
 
@@ -88,9 +92,7 @@ export default class ReactiveStore {
             this._rootDep.depend();
         }
 
-        if (found) {
-            return search;
-        }
+        if (validPath) return search;
     }
 
     set(value) {
