@@ -106,31 +106,16 @@ export default class ReactiveStore {
             // Old root value was previously an Object/Array: check for deep dependency changes
             this._triggerChangedDeps(this._deps.root, oldValue, value);
             
-        } else if (typeof oldValue === 'object') {
-            // Old root value was some other class instance...
+        } else {
+            // If new value is an Object/Array, trigger all existing deps that are set in it
             if (this._isObjectOrArray) {
-                // Is now an Object/Array: trigger the root dep and all existing deps that are set in the new value
                 this._triggerAllDeps(this._pathDeps, value);
+            }
+
+            // Trigger root dep if values are not equal or they both reference the same class instance and, either there is no special equality check, or they do not pass it
+            if (oldValue !== value || (typeof oldValue === 'object' && (!specialEqChecks[oldValue.constructor.name] || !specialEqChecks[oldValue.constructor.name](oldValue, value)))) {
                 this._triggerDep(this._rootDep);
-
-            } else {
-                const eqCheck = specialEqChecks[oldValue.constructor.name];
-
-                if (oldValue === value || !eqCheck || !eqCheck(oldValue, value)) {
-                    // Is now the same reference/doesn't have a special equality check (assumed changed) or does not pass special equality check: trigger root dep
-                    this._triggerDep(this._rootDep);
-                }
             }
-
-        } else if (oldValue !== value) {
-            // Old root value was a primitive and is not equal to the new value...
-            if (this._isObjectOrArray) {
-                // Is now an Object/Array: trigger all existing deps that are set in the new value
-                this._triggerAllDeps(this._pathDeps, value);
-            }
-
-            // Trigger the root dep
-            this._triggerDep(this._rootDep);
         }
     }
 
@@ -291,31 +276,30 @@ export default class ReactiveStore {
         }
     }
     
-    _triggerChangedDeps(depNode, oldValue, newValue) {    
-        let changed = false;
+    _triggerChangedDeps(depNode, oldValue, newValue) {
+        const subDeps = depNode ? depNode.subDeps : false,
+            newValueIsObjectOrArray = isObject(newValue) || Array.isArray(newValue);
+
+        let searchedForChangedSubDeps = false,
+            changed = false;
     
         if (typeof oldValue === 'object' && oldValue !== null) {
-            const oldConstructor = oldValue.constructor,
-                wasObject = (oldConstructor === Object),
-                wasArray = (oldConstructor === Array);
+            if (oldValue !== newValue) {
+                const oldConstructor = oldValue.constructor;
     
-            if (wasObject || wasArray) {
-                // If oldValue is an Object or Array, iterate through its keys/vals and recursively trigger subDeps
-                const subDeps = depNode ? depNode.subDeps : false;
+                if (oldConstructor === Object || oldConstructor === Array) {
+                    // If oldValue is an Object or Array, iterate through its keys/vals and recursively trigger subDeps
+                    const keys = new Set(Object.keys(oldValue));
 
-                if (oldValue !== newValue) {
-                    // If newValue references a different object, assume that the old reference has not been modified and check for deep changes.
-                    if (wasObject && !isObject(newValue)) {
-                        newValue = {};
-                    } else if (wasArray && !Array.isArray(newValue)) {
-                        newValue = [];
+                    if (newValueIsObjectOrArray) {
+                        for (const subKey of Object.keys(newValue)) {
+                            keys.add(subKey);
+                        }
                     }
     
-                    const oldKeys = Object.keys(oldValue);
-    
-                    if (oldKeys.length) {
+                    if (keys.size) {
                         // If the old Object/Array was not empty, iterate through its keys and check for deep changes
-                        for (const subKey of oldKeys) {
+                        for (const subKey of keys.values()) {
                             const subDepNode = subDeps ? subDeps[subKey] : false;
 
                             // If we already know that oldValue has changed, only keep traversing if there are unchecked sub-dependencies
@@ -323,35 +307,30 @@ export default class ReactiveStore {
                                 if (!subDeps) break;
                                 if (!subDepNode) continue;
                             }
-
-                            changed = (this._triggerChangedDeps(subDepNode, oldValue[subKey], newValue[subKey]) || changed);
+                            
+                            changed = (this._triggerChangedDeps(subDepNode, oldValue[subKey], (newValueIsObjectOrArray ? newValue[subKey] : undefined)) || changed);
+                            searchedForChangedSubDeps = true;
                         }
-    
-                    } else {
-                        // Otherwise, trigger all subDeps that are now present in newValue
-                        this._triggerAllDeps(subDeps, newValue);
-                        changed = true;
                     }
                     
                 } else {
-                    // If oldValue and newValue share a reference, there is no reliable way to check for changes because keys could have been modified.
-                    // In this case, we just trigger the current dep and all subDeps to be safe.
-                    this._triggerAllDeps(subDeps);
-                    changed = true;
+                    // If there is a special-case equality check for the oldValue's instance type (e.g. Set, Date, etc), run that
+                    changed = !specialEqChecks[oldConstructor.name] || !specialEqChecks[oldConstructor.name](oldValue, newValue);
                 }
 
-            } else if (oldValue !== newValue && specialEqChecks[oldConstructor.name]) {
-                // If there is a special-case equality check for the oldValue's instance type (e.g. Set, Date, etc), run that
-                changed = !specialEqChecks[oldConstructor.name](oldValue, newValue);
-
             } else {
-                // If none of the above match, we must assume it has changed for lack of a better way to check
+                // If oldValue and newValue share a reference, there is no reliable way to check for changes because keys could have been modified.
+                // In this case, we assume the value has changed in some way.
                 changed = true;
             }
-    
+
         } else {
             // For primitives or null, just perform basic equivalency check
             changed = (oldValue !== newValue);
+        }
+
+        if (newValueIsObjectOrArray && !searchedForChangedSubDeps) {
+            this._triggerAllDeps(subDeps, newValue);
         }
         
         if (changed && depNode) {
