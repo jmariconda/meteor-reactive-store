@@ -53,7 +53,9 @@ export default class ReactiveStore {
         this.data = initData;
     }
 
-    get(path) {
+    get(path, options) {
+        const reactive = (!options || options.reactive) && Tracker.active;
+
         let search = this.data,
             validPath = true;
 
@@ -65,7 +67,7 @@ export default class ReactiveStore {
             for (let i = 0, numTokens = pathTokens.length; i < numTokens; i++) {
                 const tokenName = pathTokens[i];
 
-                if (Tracker.active) {
+                if (reactive) {
                     const depNode = ensureDepNode(deps, tokenName, (i === numTokens - 1));
 
                     if (depNode.dep) {
@@ -79,7 +81,7 @@ export default class ReactiveStore {
                     if (isObject(search) || Array.isArray(search)) {
                         search = search[tokenName];
 
-                    } else if (Tracker.active) {
+                    } else if (reactive) {
                         validPath = false;
 
                     } else {
@@ -88,7 +90,7 @@ export default class ReactiveStore {
                 }
             }
 
-        } else if (Tracker.active) {
+        } else if (reactive) {
             this._rootDep.depend();
         }
 
@@ -292,11 +294,18 @@ export default class ReactiveStore {
                     const keys = new Set(Object.keys(oldValue));
 
                     if (newValueIsObjectOrArray) {
-                        for (const subKey of Object.keys(newValue)) {
+                        const newValueKeys = Object.keys(newValue);
+
+                        changed = (keys.size !== newValueKeys.length);
+
+                        for (const subKey of newValueKeys) {
                             keys.add(subKey);
                         }
+
+                    } else {
+                        changed = true;
                     }
-    
+
                     if (keys.size) {
                         // If the old Object/Array was not empty, iterate through its keys and check for deep changes
                         for (const subKey of keys.values()) {
