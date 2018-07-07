@@ -8,8 +8,8 @@ ecmascript-runtime-client@0.7.1
 ecmascript-runtime-server@0.7.0
 ejson@1.1.0
 http@1.4.1
-jmaric:deep-reactive-store@1.0.4
-local-test:jmaric:deep-reactive-store@1.0.4
+jmaric:deep-reactive-store@1.1.0
+local-test:jmaric:deep-reactive-store@1.1.0
 meteor@1.9.0
 meteortesting:browser-tests@0.1.2
 meteortesting:mocha@0.4.4

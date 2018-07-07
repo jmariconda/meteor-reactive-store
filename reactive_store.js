@@ -349,3 +349,11 @@ export default class ReactiveStore {
         return changed;
     }
 }
+
+ReactiveStore.addEqualityCheck = function (constructor, eqCheck) {
+    if (typeof constructor !== 'function' || typeof eqCheck !== 'function' || eqCheck.length !== 2) {
+        throw new Error('You must provide a valid constructor function/class and an equality check function that takes two parameters (oldValue, newValue).');
+    }
+
+    specialEqChecks[constructor.name] = eqCheck;
+};

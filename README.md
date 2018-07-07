@@ -34,8 +34,12 @@ Then in any file:
 - ### clear()
     - Reset the root value based on its current type.
     - If it is an Object or Array, it will be reset to {} or [] respectively.
-    - Otherwise it will be set to undefined.
+    - Otherwise it will be set to undefined.    
+- ### (_static_) ReactiveStore.addEqualityCheck(constructor: _function/class_, eqCheck: _function_)
+    - Add an equality checking function that will be used for instances of the given constructor.
+    - The eqCheck function should take two parameters (oldValue, newValue) and return a truthy/falsy value that will used to determine if they are equal.
+    - By default, there are already equality checks for Set and Date instances, but these can be overridden if you need to for some reason.
+    - The caveat stated below still applies for this.
 
-## Caveats:
-- Deep dependencies cannot be checked if an Object is gotten from the store, modified in place, and then set. In this case, the value will be assumed as changed and all related dependencies will be triggered to be safe. This is because, similarly to ReactiveVar, ReactiveStore does not serialize/clone the data stored in it. This has the benefit of being able to store anything inside of it (unlike ReactiveDict which only supports EJSON types), but you also need to be aware that references will be kept when modifying data. Ideally, you should set deep properties directly, rather than getting, modifying, and setting parent Objects.
-- Currently, the only supported class instances for change tracking (besides Objects and Arrays) are Set and Date. If any other instance type is set, it will be assumed as changed. This also follows the same rule stated above (i.e. if you get/modify/set an existing Set/Date in the store, there is no way to check for changes, so it will be assumed as changed). I plan to add a function that can be called at startup to extend the supported object types for change tracking.
+## Caveat:
+- Deep dependencies cannot be checked if a referenced value is gotten from the store, modified in place, and then set. In this case, the value will be assumed as changed and all related dependencies will be triggered to be safe. This is because, similarly to ReactiveVar, ReactiveStore does not serialize/clone the data stored in it. This has the benefit of being able to store anything inside of it (unlike ReactiveDict which only supports EJSON types), but you also need to be aware that references will be kept when modifying data. Ideally, you should set deep properties directly or set a new instance, rather than getting, modifying, and setting the existing reference.
