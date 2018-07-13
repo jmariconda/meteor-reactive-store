@@ -54,6 +54,10 @@ export default class ReactiveStore {
     }
 
     get(path, options) {
+        if (options === undefined && isObject(path)) {
+            options = path;
+        }
+        
         const reactive = (!options || options.reactive) && Tracker.active;
 
         let search = this.data,

@@ -21,7 +21,7 @@ Then in any file:
         - reactive (_boolean_): If this is set to a falsy value, the query will not be tracked.
 - ### set(value: _any_)
     - Calling this will override the root value with whatever value is provided.
-    - When this happens, ReactiveStore will take into account the previous type of the root value and seach for deep dependency changes accordingly.
+    - When this happens, ReactiveStore will take into account the previous type of the root value and search for deep dependency changes accordingly.
 - ### assign(pathValMapOrPath: _Object/string_, value: _any_)
     - First param can either be an Object of dot-notated paths mapped to values or a single path. The second param will only be taken into account if it is the latter.
     - This function will go through the path(s) given, set the assigned value(s), and trigger any dependencies that have been affected (at, above, or below the set path).
@@ -39,7 +39,8 @@ Then in any file:
     - Add an equality checking function that will be used for instances of the given constructor.
     - The eqCheck function should take two parameters (oldValue, newValue) and return a truthy/falsy value that will used to determine if they are equal.
     - By default, there are already equality checks for Set and Date instances, but these can be overridden if you need to for some reason.
-    - The caveat stated below still applies for this.
+    - The first caveat stated below still applies for this.
 
-## Caveat:
+## Caveats:
 - Deep dependencies cannot be checked if a referenced value is gotten from the store, modified in place, and then set. In this case, the value will be assumed as changed and all related dependencies will be triggered to be safe. This is because, similarly to ReactiveVar, ReactiveStore does not serialize/clone the data stored in it. This has the benefit of being able to store anything inside of it (unlike ReactiveDict which only supports EJSON types), but you also need to be aware that references will be kept when modifying data. Ideally, you should set deep properties directly or set a new instance, rather than getting, modifying, and setting the existing reference.
+- For efficiency reasons, ReactiveStore will only check for deep Object/Array changes as far as it needs to. This means that once a change has been found, if there are no deeper dependencies to check, the deep traversal will stop and any relevant dependency changes will be triggered. If you have many deep dependencies registered and only one or two need to be changed, you may want to use the assign() function to directly target and change them in order to avoid unnecessary traversal.
