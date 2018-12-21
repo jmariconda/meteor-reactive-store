@@ -20,7 +20,7 @@ function ensureDepNode(deps, key, initDep) {
     return deps[key];
 }
 
-const specialEqChecks = {
+const customEqChecks = {
     Set(oldSet, newSet) {
         let equal = (newSet instanceof Set && newSet.size === oldSet.size);
 
@@ -41,8 +41,8 @@ const specialEqChecks = {
 };
 
 export default class ReactiveStore {
-    constructor(initData) {
-        this._isObjectOrArray = isObject(initData) || Array.isArray(initData);
+    constructor(data) {
+        this._isObjectOrArray = isObject(data) || Array.isArray(data);
         this._deps = {};
         
         ensureDepNode(this._deps, 'root', true);
@@ -50,20 +50,22 @@ export default class ReactiveStore {
         this._rootDep = this._deps.root.dep;
         this._pathDeps = this._deps.root.subDeps;
         
-        this.data = initData;
+        this.data = data;
     }
 
     get(path, options) {
+        // Assume that options has been given as first param if it is undefined and path is an object
         if (options === undefined && isObject(path)) {
             options = path;
         }
         
-        const reactive = (!options || options.reactive) && Tracker.active;
+        const reactive = Tracker.active && (!isObject(options) || (options.hasOwnProperty('reactive') && !options.reactive));
 
         let search = this.data,
             validPath = true;
 
         if (isNonEmptyString(path)) {
+            // Search down path for value while tracking dependencies (if reactive)
             const pathTokens = path.split('.');
 
             let deps = this._pathDeps;
@@ -84,17 +86,15 @@ export default class ReactiveStore {
                 if (validPath) {
                     if (isObject(search) || Array.isArray(search)) {
                         search = search[tokenName];
-
-                    } else if (reactive) {
-                        validPath = false;
-
                     } else {
-                        return;
+                        validPath = false;
+                        if (!reactive) break;
                     }
                 }
             }
 
         } else if (reactive) {
+            // Otherwise track the root dependency (if reactive)
             this._rootDep.depend();
         }
 
@@ -118,8 +118,8 @@ export default class ReactiveStore {
                 this._triggerAllDeps(this._pathDeps, value);
             }
 
-            // Trigger root dep if values are not equal or they both reference the same class instance and, either there is no special equality check, or they do not pass it
-            if (oldValue !== value || (typeof oldValue === 'object' && (!specialEqChecks[oldValue.constructor.name] || !specialEqChecks[oldValue.constructor.name](oldValue, value)))) {
+            // Trigger root dep if values are not equal or they both reference the same class instance and, either there is no custom equality check, or they do not pass it
+            if (oldValue !== value || (typeof oldValue === 'object' && (!customEqChecks[oldValue.constructor.name] || !customEqChecks[oldValue.constructor.name](oldValue, value)))) {
                 this._triggerDep(this._rootDep);
             }
         }
@@ -171,7 +171,7 @@ export default class ReactiveStore {
             this.set((this.data.constructor === Object) ? {} : []);
         } else {
             // Otherwise, reset root data to undefined
-            this.set(undefined);   
+            this.set(undefined);
         }
     }
 
@@ -320,15 +320,17 @@ export default class ReactiveStore {
                                 if (!subDeps) break;
                                 if (!subDepNode) continue;
                             }
-                            
-                            changed = (this._triggerChangedDeps(subDepNode, oldValue[subKey], (newValueIsObjectOrArray ? newValue[subKey] : undefined)) || changed);
-                            searchedForChangedSubDeps = true;
+
+                            const subDepsChanged = this._triggerChangedDeps(subDepNode, oldValue[subKey], newValueIsObjectOrArray ? newValue[subKey] : undefined);
+
+                            if (!searchedForChangedSubDeps) searchedForChangedSubDeps = true;
+                            if (subDepsChanged && !changed) changed = true;                            
                         }
                     }
                     
                 } else {
-                    // If there is a special-case equality check for the oldValue's instance type (e.g. Set, Date, etc), run that
-                    changed = !specialEqChecks[oldConstructor.name] || !specialEqChecks[oldConstructor.name](oldValue, newValue);
+                    // If there is a custom equality check for the oldValue's instance type (e.g. Set, Date, etc), run that
+                    changed = !customEqChecks[oldConstructor.name] || !customEqChecks[oldConstructor.name](oldValue, newValue);
                 }
 
             } else {
@@ -359,5 +361,5 @@ ReactiveStore.addEqualityCheck = function (constructor, eqCheck) {
         throw new Error('You must provide a valid constructor function/class and an equality check function that takes two parameters (oldValue, newValue).');
     }
 
-    specialEqChecks[constructor.name] = eqCheck;
+    customEqChecks[constructor.name] = eqCheck;
 };
