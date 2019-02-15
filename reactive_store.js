@@ -1,11 +1,11 @@
 import { Tracker } from 'meteor/tracker';
 
 function isObject(val) {
-    return val && typeof val === 'object' && val.constructor === Object;
+    return val instanceof Object && val.constructor === Object;
 }
 
 function isNonEmptyString(val) {
-    return val && typeof val === 'string';
+    return val && val.constructor === String;
 }
 
 function ensureDepNode(deps, key, initDep) {
@@ -25,7 +25,7 @@ const customEqChecks = {
         let equal = (newSet instanceof Set && newSet.size === oldSet.size);
 
         if (equal) {
-            for (const val of oldSet.values()) {
+            for (const val of oldSet) {
                 if (!newSet.has(val)) {
                     equal = false;
                     break;
@@ -53,6 +53,7 @@ export default class ReactiveStore {
         this.data = data;
     }
 
+    // Get value at path register reactive dependency if reactive
     get(path, options) {
         // Assume that options has been given as first param if it is undefined and path is an object
         if (options === undefined && isObject(path)) {
@@ -119,7 +120,7 @@ export default class ReactiveStore {
             }
 
             // Trigger root dep if values are not equal or they both reference the same class instance and, either there is no custom equality check, or they do not pass it
-            if (oldValue !== value || (typeof oldValue === 'object' && (!customEqChecks[oldValue.constructor.name] || !customEqChecks[oldValue.constructor.name](oldValue, value)))) {
+            if (oldValue !== value || (oldValue instanceof Object && (!customEqChecks[oldValue.constructor.name] || !customEqChecks[oldValue.constructor.name](oldValue, value)))) {
                 this._triggerDep(this._rootDep);
             }
         }
@@ -289,7 +290,7 @@ export default class ReactiveStore {
         let searchedForChangedSubDeps = false,
             changed = false;
     
-        if (typeof oldValue === 'object' && oldValue !== null) {
+        if (oldValue instanceof Object) {
             if (oldValue !== newValue) {
                 const oldConstructor = oldValue.constructor;
     
@@ -312,7 +313,7 @@ export default class ReactiveStore {
 
                     if (keys.size) {
                         // If the old Object/Array was not empty, iterate through its keys and check for deep changes
-                        for (const subKey of keys.values()) {
+                        for (const subKey of keys) {
                             const subDepNode = subDeps ? subDeps[subKey] : false;
 
                             // If we already know that oldValue has changed, only keep traversing if there are unchecked sub-dependencies
@@ -356,10 +357,20 @@ export default class ReactiveStore {
     }
 }
 
+// Add custom equality check for instances of the given constuctor
 ReactiveStore.addEqualityCheck = function (constructor, eqCheck) {
-    if (typeof constructor !== 'function' || typeof eqCheck !== 'function' || eqCheck.length !== 2) {
+    if (!(constructor instanceof Function) || !(eqCheck instanceof Function) || eqCheck.length !== 2) {
         throw new Error('You must provide a valid constructor function/class and an equality check function that takes two parameters (oldValue, newValue).');
     }
 
     customEqChecks[constructor.name] = eqCheck;
+};
+
+// Remove custom equality check for instances of the given constuctor
+ReactiveStore.removeEqualityCheck = function (constructor) {
+    if (!(constructor instanceof Function)) {
+        throw new Error('You must provide a valid constructor function/class.');
+    }
+
+    delete customEqChecks[constructor.name];
 };

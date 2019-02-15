@@ -1,13 +1,13 @@
 Package.describe({
     summary: 'A reactive store with deep dependency tracking for meteor.',
-    version: '1.1.2',
+    version: '1.1.3',
     name: 'jmaric:deep-reactive-store',
     documentation: 'README.md',
     git: 'https://github.com/jeffm24/meteor-reactive-store.git'
 });
 
 Package.onUse((api) => {
-    api.use(['tracker@1.2.0', 'ecmascript@0.11.1']);
+    api.use(['tracker@1.2.0', 'ecmascript@0.12.4']);
     api.mainModule('reactive_store.js');
 });
 
