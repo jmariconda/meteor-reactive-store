@@ -1,0 +1,26 @@
+{
+  "name": "meteor-reactive-store",
+  "version": "1.2.1",
+  "description": "Reactive Store is a reactive data type for Meteor that supports deep dependency tracking.",
+  "main": "package.js",
+  "dependencies": {},
+  "devDependencies": {
+    "babel-eslint": "^10.0.1",
+    "eslint": "^5.3.0",
+    "eslint-config-airbnb-base": "^13.1.0",
+    "eslint-plugin-import": "^2.14.0"
+  },
+  "scripts": {
+    "test": "meteor test --driver-package meteortesting:mocha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeffm24/meteor-reactive-store.git"
+  },
+  "author": "Jeff Mariconda",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/jeffm24/meteor-reactive-store/issues"
+  },
+  "homepage": "https://github.com/jeffm24/meteor-reactive-store#readme"
+}

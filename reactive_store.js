@@ -4,10 +4,6 @@ function isObject(val) {
     return val instanceof Object && val.constructor === Object;
 }
 
-function isNonEmptyString(val) {
-    return val && val.constructor === String;
-}
-
 function ensureDepNode(deps, key, initDep) {
     if (!deps[key]) {
         deps[key] = { subDeps: {} };
@@ -41,8 +37,9 @@ const customEqChecks = {
 };
 
 export default class ReactiveStore {
-    constructor(data) {
+    constructor(data, mutators) {
         this._isObjectOrArray = isObject(data) || Array.isArray(data);
+        this._mutators = isObject(mutators) ? mutators : {};
         this._deps = {};
         
         ensureDepNode(this._deps, 'root', true);
@@ -53,19 +50,44 @@ export default class ReactiveStore {
         this.data = data;
     }
 
+    // Add custom equality check for instances of the given constuctor
+    static addEqualityCheck(constructor, eqCheck) {
+        if (!(constructor instanceof Function) || !(eqCheck instanceof Function) || eqCheck.length !== 2) {
+            throw new Error('You must provide a valid constructor function/class and an equality check function that takes two parameters (oldValue, newValue).');
+        }
+
+        customEqChecks[constructor.name] = eqCheck;
+    }
+
+    // Remove custom equality check for instances of the given constuctor
+    static removeEqualityCheck(constructor) {
+        if (!(constructor instanceof Function)) {
+            throw new Error('You must provide a valid constructor function/class.');
+        }
+
+        delete customEqChecks[constructor.name];
+    }
+
+    // Global Symbol that can be assigned to path to delete it from the store
+    static DELETE = Symbol('DELETE_PATH');
+
     // Get value at path register reactive dependency if reactive
     get(path, options) {
-        // Assume that options has been given as first param if it is undefined and path is an object
-        if (options === undefined && isObject(path)) {
+        if (isObject(path)) {
+            // Assume first param is options object if it is an Object
             options = path;
+            path = null;
+        } else if (!isObject(options)) {
+            // Otherwise, set options to null if it is not an Object
+            options = null;
         }
         
-        const reactive = Tracker.active && (!isObject(options) || (options.hasOwnProperty('reactive') && !options.reactive));
+        const reactive = Tracker.active && (!options || (options.hasOwnProperty('reactive') && !options.reactive));
 
         let search = this.data,
             validPath = true;
 
-        if (isNonEmptyString(path)) {
+        if (path && path.constructor === String) {
             // Search down path for value while tracking dependencies (if reactive)
             const pathTokens = path.split('.');
 
@@ -126,8 +148,8 @@ export default class ReactiveStore {
         }
     }
 
-    assign(dataOrPath, value) {
-        if (!dataOrPath) return;
+    assign(pathOrMap, value) {
+        if (!pathOrMap) return;
 
         // Coerce root data to be an Object if it is not currenty an Object or Array
         if (!this._isObjectOrArray) {
@@ -135,19 +157,33 @@ export default class ReactiveStore {
             this.data = {};
         }
 
-        if (isObject(dataOrPath)) {
-            // dataOrPath is Object of paths assigned to values
+        if (isObject(pathOrMap)) {
+            // pathOrMap is Object of paths mapped to values
             this._triggeredDepSet = new Set();
 
-            for (const path of Object.keys(dataOrPath)) {
-                this._setAtPath(path, dataOrPath[path]);
+            for (const path of Object.keys(pathOrMap)) {
+                let val = pathOrMap[path];
+
+                // Run mutator function for the set path if once exists
+                if (this._mutators[path] instanceof Function) {
+                    val = this._mutators[path](val, this);
+                }
+
+                this._setAtPath(path, val);
             }
 
             delete this._triggeredDepSet;
 
         } else {
-            // dataOrPath is a single path to assign
-            this._setAtPath(dataOrPath, value);
+            // pathOrMap is a single path to assign
+            const path = pathOrMap;
+
+            // Run mutator function for the set path if once exists
+            if (this._mutators[path] instanceof Function) {
+                value = this._mutators[path](value, this);
+            }
+            
+            this._setAtPath(path, value);
         }
     }
     
@@ -159,7 +195,7 @@ export default class ReactiveStore {
         this._triggeredDepSet = new Set();
 
         for (const path of paths) {
-            this._setAtPath(path, null, { unset: true });
+            this._setAtPath(path, ReactiveStore.DELETE);
         }
 
         delete this._triggeredDepSet;
@@ -176,12 +212,24 @@ export default class ReactiveStore {
         }
     }
 
-    _setAtPath(path, value, options = {}) {
+    updateMutators(newMutators) {
+        if (isObject(newMutators)) {
+            Object.assign(this._mutators, newMutators);
+        }
+    }
+
+    removeMutators(...paths) {
+        for (const path of paths) {
+            delete this._mutators[path];
+        }
+    }
+
+    _setAtPath(path, value) {
         const pathSplit = path.split('.'),
             parentDeps = [];
 
         let deps = this._pathDeps,
-            search = this.data;           
+            search = this.data;
             
         for (let pathIdx = 0, numTokens = pathSplit.length; pathIdx < numTokens; pathIdx++) {
             const pathToken = pathSplit[pathIdx];
@@ -211,14 +259,15 @@ export default class ReactiveStore {
 
             } else {
                 // Last Token: Set/Unset search at pathToken and handle dep changes
-                const keyExists = search.hasOwnProperty(pathToken);
+                const keyExists = search.hasOwnProperty(pathToken),
+                    unset = (value === ReactiveStore.DELETE); // Unset if value is ReactiveStore.DELETE
 
-                if (!options.unset || keyExists) {
+                if (!unset || keyExists) {
                     const oldValue = search[pathToken];
 
                     let changed = true;
         
-                    if (options.unset) {
+                    if (unset) {
                         // Delete pathToken if unset
                         delete search[pathToken];
         
@@ -356,21 +405,3 @@ export default class ReactiveStore {
         return changed;
     }
 }
-
-// Add custom equality check for instances of the given constuctor
-ReactiveStore.addEqualityCheck = function (constructor, eqCheck) {
-    if (!(constructor instanceof Function) || !(eqCheck instanceof Function) || eqCheck.length !== 2) {
-        throw new Error('You must provide a valid constructor function/class and an equality check function that takes two parameters (oldValue, newValue).');
-    }
-
-    customEqChecks[constructor.name] = eqCheck;
-};
-
-// Remove custom equality check for instances of the given constuctor
-ReactiveStore.removeEqualityCheck = function (constructor) {
-    if (!(constructor instanceof Function)) {
-        throw new Error('You must provide a valid constructor function/class.');
-    }
-
-    delete customEqChecks[constructor.name];
-};
