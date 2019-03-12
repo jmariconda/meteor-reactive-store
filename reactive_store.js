@@ -1,16 +1,21 @@
 import { Tracker } from 'meteor/tracker';
+import { Spacebars } from 'meteor/spacebars';
 
 function isObject(val) {
-    return val instanceof Object && val.constructor === Object;
+    return (val instanceof Object && val.constructor === Object);
 }
 
-function ensureDepNode(deps, key, initDep) {
-    if (!deps[key]) {
-        deps[key] = { subDeps: {} };
+function ensureDep(depNode) {
+    if (!depNode.dep) {
+        depNode.dep = new Tracker.Dependency();
     }
 
-    if (initDep && !deps[key].dep) {
-        deps[key].dep = new Tracker.Dependency();
+    return depNode.dep;
+}
+
+function ensureDepNode(deps, key) {
+    if (!deps[key]) {
+        deps[key] = { subDeps: {} };
     }
 
     return deps[key];
@@ -41,11 +46,7 @@ export default class ReactiveStore {
         this._isObjectOrArray = isObject(data) || Array.isArray(data);
         this._mutators = isObject(mutators) ? mutators : {};
         this._deps = {};
-        
-        ensureDepNode(this._deps, 'root', true);
-        
-        this._rootDep = this._deps.root.dep;
-        this._pathDeps = this._deps.root.subDeps;
+        this._rootNode = ensureDepNode(this._deps, 'root');
         
         this.data = data;
     }
@@ -73,16 +74,26 @@ export default class ReactiveStore {
 
     // Get value at path register reactive dependency if reactive
     get(path, options) {
-        if (isObject(path)) {
-            // Assume first param is options object if it is an Object
-            options = path;
+        if (isObject(path) || (path instanceof Spacebars.kw)) {
+            // Assume first param is options object if it is an Object or Spacebars.kw 
+            options = (path instanceof Spacebars.kw) ? path.hash : path;
             path = null;
+
+        } else if (options instanceof Spacebars.kw) {
+            // Use the internal hash object if options is a Spacebars.kw instance
+            options = options.hash;
+
         } else if (!isObject(options)) {
-            // Otherwise, set options to null if it is not an Object
-            options = null;
+            // Otherwise, set options to {} if it is not an Object
+            options = {};
         }
-        
-        const reactive = Tracker.active && (!options || (options.hasOwnProperty('reactive') && !options.reactive));
+
+        // Set default option values if they are not set
+        if (!options.hasOwnProperty('reactive')) {
+            options.reactive = true;
+        }
+
+        const reactive = (Tracker.active && options.reactive);
 
         let search = this.data,
             validPath = true;
@@ -91,16 +102,17 @@ export default class ReactiveStore {
             // Search down path for value while tracking dependencies (if reactive)
             const pathTokens = path.split('.');
 
-            let deps = this._pathDeps;
+            let deps = this._rootNode.subDeps;
 
             for (let i = 0, numTokens = pathTokens.length; i < numTokens; i++) {
                 const tokenName = pathTokens[i];
 
                 if (reactive) {
-                    const depNode = ensureDepNode(deps, tokenName, (i === numTokens - 1));
+                    const isLastToken = (i === numTokens - 1),
+                        depNode = ensureDepNode(deps, tokenName);
 
-                    if (depNode.dep) {
-                        depNode.dep.depend();
+                    if (isLastToken) {
+                        ensureDep(depNode).depend();
                     }
                     
                     deps = depNode.subDeps;
@@ -118,7 +130,7 @@ export default class ReactiveStore {
 
         } else if (reactive) {
             // Otherwise track the root dependency (if reactive)
-            this._rootDep.depend();
+            ensureDep(this._rootNode).depend();
         }
 
         if (validPath) return search;
@@ -133,17 +145,26 @@ export default class ReactiveStore {
 
         if (wasObjectOrArray) {
             // Old root value was previously an Object/Array: check for deep dependency changes
-            this._triggerChangedDeps(this._deps.root, oldValue, value);
+            this._triggerChangedDeps(this._rootNode, oldValue, value);
             
         } else {
             // If new value is an Object/Array, trigger all existing deps that are set in it
             if (this._isObjectOrArray) {
-                this._triggerAllDeps(this._pathDeps, value);
+                this._triggerAllDeps(this._rootNode.subDeps, value);
             }
 
-            // Trigger root dep if values are not equal or they both reference the same class instance and, either there is no custom equality check, or they do not pass it
-            if (oldValue !== value || (oldValue instanceof Object && (!customEqChecks[oldValue.constructor.name] || !customEqChecks[oldValue.constructor.name](oldValue, value)))) {
-                this._triggerDep(this._rootDep);
+            // Trigger root dep if values are not equal or they both reference the same instance and, either there is no custom equality check, or they do not pass it
+            if (
+                (oldValue !== value)
+                || (
+                    (oldValue instanceof Object)
+                    && (
+                        !customEqChecks[oldValue.constructor.name]
+                        || !customEqChecks[oldValue.constructor.name](oldValue, value)
+                    )
+                )
+            ) {
+                this._triggerDep(this._rootNode.dep);
             }
         }
     }
@@ -228,7 +249,7 @@ export default class ReactiveStore {
         const pathSplit = path.split('.'),
             parentDeps = [];
 
-        let deps = this._pathDeps,
+        let deps = this._rootNode.subDeps,
             search = this.data;
             
         for (let pathIdx = 0, numTokens = pathSplit.length; pathIdx < numTokens; pathIdx++) {
@@ -294,7 +315,7 @@ export default class ReactiveStore {
                             this._triggerDep(parentDeps[i]);
                         }
                         
-                        this._triggerDep(this._rootDep);
+                        this._triggerDep(this._rootNode.dep);
                     }
                 }
             }

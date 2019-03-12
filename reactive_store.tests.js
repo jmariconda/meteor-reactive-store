@@ -1,5 +1,4 @@
 import ReactiveStore from 'meteor/jmaric:deep-reactive-store';
-// import ReactiveDict from 'meteor/reactive-dict';
 import { Tracker } from 'meteor/tracker';
 import assert from 'assert';
 

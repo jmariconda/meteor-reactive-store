@@ -21,6 +21,8 @@ Then in any file:
     - If no path is provided, the root value will be returned and tracked (because of this, ReactiveStore can essentially stand in as a direct replacement for ReactiveVar).
     - Options:
         - reactive (_Boolean_): If this is set to a falsy value, the query will not be tracked.
+    - Notes:
+        - Options can also be parsed from a Spacebars.kw hash passed from Blaze (e.g. {{store.get 'field' reactive=false}} or {{store.get reactive=false}} if you make the store accessible in your template).
 - ### set(value: _Any_)
     - Calling this will override the root value with whatever value is provided.
     - When this happens, ReactiveStore will take into account the previous type of the root value and search for deep dependency changes accordingly.
