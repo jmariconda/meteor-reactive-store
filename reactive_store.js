@@ -1,55 +1,79 @@
 import { Tracker } from 'meteor/tracker';
 import { Spacebars } from 'meteor/spacebars';
 
-function isObject(val) {
-    return (val instanceof Object && val.constructor === Object);
-}
+/**
+ * Dot-noted path string.
+ * @typedef path
+ * @type {string}
+ * 
+ * Dependency node object.
+ * @typedef DepNode
+ * @type {Object}
+ * @property {Tracker.Dependency} [dep] - Tracker dependency associated with this node.
+ * @property {Object.<string, DepNode>} subDeps - Map of subKeys -> subDepNodes
+ * 
+ * Assignment mutator function.
+ * @typedef Mutator
+ * @type {Function}
+ * @param {any} value - Assigned value
+ * @param {ReactiveStore} store - Current ReactiveStore instance
+ * @returns {any} Mutated value
+ */
 
-function ensureDep(depNode) {
-    if (!depNode.dep) {
-        depNode.dep = new Tracker.Dependency();
-    }
-
-    return depNode.dep;
-}
-
-function ensureDepNode(deps, key) {
-    if (!deps[key]) {
-        deps[key] = { subDeps: {} };
-    }
-
-    return deps[key];
-}
-
-const customEqChecks = {
-    Set(oldSet, newSet) {
-        let equal = (newSet instanceof Set && newSet.size === oldSet.size);
-
-        if (equal) {
-            for (const val of oldSet) {
-                if (!newSet.has(val)) {
-                    equal = false;
-                    break;
-                }
-            }
+const isObject = val => (val instanceof Object && val.constructor === Object),
+    isTraversable = val => (isObject(val) || Array.isArray(val)),
+    ensureDep = (depNode) => {
+        if (!depNode.dep) {
+            depNode.dep = new Tracker.Dependency();
         }
 
-        return equal;
+        return depNode.dep;
     },
-    Date(oldDate, newDate) {
-        return (newDate instanceof Date && oldDate.getTime() === newDate.getTime());
-    }
-};
+    ensureDepNode = (deps, key) => {
+        if (!deps[key]) {
+            deps[key] = { subDeps: {} };
+        }
+
+        return deps[key];
+    };
 
 export default class ReactiveStore {
+    /**
+     * @param {any} data - Initial root value.
+     * @param {Object.<path, Mutator>} mutators - path -> Mutator map
+     */
     constructor(data, mutators) {
-        this._isObjectOrArray = isObject(data) || Array.isArray(data);
-        this._mutators = isObject(mutators) ? mutators : {};
         this._deps = {};
         this._rootNode = ensureDepNode(this._deps, 'root');
+        this._isTraversable = isTraversable(data);
+        this._mutators = isObject(mutators) ? mutators : {};
         
         this.data = data;
     }
+
+    // Symbol that can be assigned to path to delete it from the store
+    static DELETE = Symbol('DELETE_PATH');
+
+    // Map of constructor names to equality check functions
+    static customEqChecks = {
+        Set(oldSet, newSet) {
+            let equal = (newSet instanceof Set && newSet.size === oldSet.size);
+
+            if (equal) {
+                for (const val of oldSet) {
+                    if (!newSet.has(val)) {
+                        equal = false;
+                        break;
+                    }
+                }
+            }
+
+            return equal;
+        },
+        Date(oldDate, newDate) {
+            return (newDate instanceof Date && oldDate.getTime() === newDate.getTime());
+        }
+    };
 
     // Add custom equality check for instances of the given constuctor
     static addEqualityCheck(constructor, eqCheck) {
@@ -57,7 +81,7 @@ export default class ReactiveStore {
             throw new Error('You must provide a valid constructor function/class and an equality check function that takes two parameters (oldValue, newValue).');
         }
 
-        customEqChecks[constructor.name] = eqCheck;
+        ReactiveStore.customEqChecks[constructor.name] = eqCheck;
     }
 
     // Remove custom equality check for instances of the given constuctor
@@ -66,17 +90,24 @@ export default class ReactiveStore {
             throw new Error('You must provide a valid constructor function/class.');
         }
 
-        delete customEqChecks[constructor.name];
+        delete ReactiveStore.customEqChecks[constructor.name];
     }
 
-    // Global Symbol that can be assigned to path to delete it from the store
-    static DELETE = Symbol('DELETE_PATH');
+    /**
+     * Get value at path (or root if no path is given) and register related dependency if reactive.
+     * @param {path|getOptions} pathOrOptions - Path or options object.
+     * @param {getOptions} [options] - Options object (only used if path is provided as first parameter).
+     * 
+     * @typedef getOptions
+     * @type {Object}
+     * @property {boolean} [reactive=true] - If true, a dependency will be registered and tracked for the targeted path.
+     */
+    get(pathOrOptions, options) {
+        let path = pathOrOptions;
 
-    // Get value at path register reactive dependency if reactive
-    get(path, options) {
-        if (isObject(path) || (path instanceof Spacebars.kw)) {
+        if (isObject(pathOrOptions) || (pathOrOptions instanceof Spacebars.kw)) {
             // Assume first param is options object if it is an Object or Spacebars.kw 
-            options = (path instanceof Spacebars.kw) ? path.hash : path;
+            options = (pathOrOptions instanceof Spacebars.kw) ? pathOrOptions.hash : pathOrOptions;
             path = null;
 
         } else if (options instanceof Spacebars.kw) {
@@ -136,31 +167,35 @@ export default class ReactiveStore {
         if (validPath) return search;
     }
 
+    /**
+     * Replace the root value with the given value.
+     * @param {any} value
+     */
     set(value) {
-        const wasObjectOrArray = this._isObjectOrArray,
+        const wasTraversable = this._isTraversable,
             oldValue = this.data;
         
-        this._isObjectOrArray = isObject(value) || Array.isArray(value);
+        this._isTraversable = isTraversable(value);
         this.data = value;
 
-        if (wasObjectOrArray) {
-            // Old root value was previously an Object/Array: check for deep dependency changes
+        if (wasTraversable) {
+            // Old root value was previously traversable: check for deep dependency changes
             this._triggerChangedDeps(this._rootNode, oldValue, value);
             
         } else {
-            // If new value is an Object/Array, trigger all existing deps that are set in it
-            if (this._isObjectOrArray) {
+            // If new value is traversable, trigger all existing deps that are set in it
+            if (this._isTraversable) {
                 this._triggerAllDeps(this._rootNode.subDeps, value);
             }
 
             // Trigger root dep if values are not equal or they both reference the same instance and, either there is no custom equality check, or they do not pass it
             if (
-                (oldValue !== value)
+                (value !== oldValue)
                 || (
                     (oldValue instanceof Object)
                     && (
-                        !customEqChecks[oldValue.constructor.name]
-                        || !customEqChecks[oldValue.constructor.name](oldValue, value)
+                        !ReactiveStore.customEqChecks[oldValue.constructor.name]
+                        || !ReactiveStore.customEqChecks[oldValue.constructor.name](oldValue, value)
                     )
                 )
             ) {
@@ -169,51 +204,64 @@ export default class ReactiveStore {
         }
     }
 
+    /**
+     * Assign given value(s) to the given path(s).
+     * @param {path|Object.<path, any>} pathOrMap - Single path or path -> value map.
+     * @param {any} [value] - Value to assign (only used when pathOrMap is a single path).
+     */
     assign(pathOrMap, value) {
         if (!pathOrMap) return;
 
-        // Coerce root data to be an Object if it is not currenty an Object or Array
-        if (!this._isObjectOrArray) {
-            this._isObjectOrArray = true;
+        // Coerce root data to be an Object if it is not currenty traversable
+        if (!this._isTraversable) {
+            this._isTraversable = true;
             this.data = {};
         }
 
         if (isObject(pathOrMap)) {
-            // pathOrMap is Object of paths mapped to values
+            // pathOrMap is path -> value map
+            const paths = Object.keys(pathOrMap);
+
             this._triggeredDepSet = new Set();
-
-            for (const path of Object.keys(pathOrMap)) {
-                let val = pathOrMap[path];
-
-                // Run mutator function for the set path if once exists
-                if (this._mutators[path] instanceof Function) {
-                    val = this._mutators[path](val, this);
+    
+            for (const path of paths) {
+                const pathMutator = this._mutators[path];
+    
+                // Run mutator function for path if there is one
+                if (pathMutator instanceof Function) {
+                    this._setAtPath(path, pathMutator(pathOrMap[path], this));
+                } else {
+                    this._setAtPath(path, pathOrMap[path]);
                 }
-
-                this._setAtPath(path, val);
             }
-
+    
             delete this._triggeredDepSet;
 
         } else {
-            // pathOrMap is a single path to assign
-            const path = pathOrMap;
-
-            // Run mutator function for the set path if once exists
-            if (this._mutators[path] instanceof Function) {
-                value = this._mutators[path](value, this);
-            }
+            // Assume pathOrMap is path string
+            const path = pathOrMap,
+                pathMutator = this._mutators[path];
             
-            this._setAtPath(path, value);
-        }
+            // Run mutator function for path if there is one
+            if (pathMutator instanceof Function) {
+                this._setAtPath(path, pathMutator(value, this));
+            } else {
+                this._setAtPath(path, value);
+            }
+        }       
     }
     
-    // Iterate through valid paths and unset values
+    /**
+     * Delete all of the given paths from the store.
+     * @param {...path} paths - Paths to delete from the store.
+     */
     delete(...paths) {
-        // Only run if root data is an Object or Array and paths are available
-        if (!this._isObjectOrArray) return;
+        // Only run if root data is traversable
+        if (this._isTraversable) return;
 
-        this._triggeredDepSet = new Set();
+        if (paths.length > 1) {
+            this._triggeredDepSet = new Set();
+        }
 
         for (const path of paths) {
             this._setAtPath(path, ReactiveStore.DELETE);
@@ -222,56 +270,77 @@ export default class ReactiveStore {
         delete this._triggeredDepSet;
     }
 
-    // Reset root data based on current type
+    /**
+     * Reset root data based on current type.
+     */
     clear() {
-        if (this._isObjectOrArray) {
-            // If root data is an Object or Array, reset it to empty Object/Array respectively
-            this.set((this.data.constructor === Object) ? {} : []);
-        } else {
-            // Otherwise, reset root data to undefined
-            this.set(undefined);
+        let newRoot;
+
+        // If root data is currently an Object or Array, reset it to empty Object/Array respectively
+        if (isObject(this.data)) {
+            newRoot = [];
+        } else if (Array.isArray(this.data)) {
+            newRoot = {};
         }
+
+        this.set(newRoot);
     }
 
+    /**
+     * Update _mutators map with the given newMutators map.
+     * @param {Object.<path, Mutator>} newMutators - path -> Mutator map to assign to _mutators.
+     */
     updateMutators(newMutators) {
         if (isObject(newMutators)) {
             Object.assign(this._mutators, newMutators);
         }
     }
 
+    /**
+     * Delete mutators for given path(s).
+     * @param {...path} paths - Paths to delete from _mutators.
+     */
     removeMutators(...paths) {
         for (const path of paths) {
             delete this._mutators[path];
         }
     }
 
+    /**
+     * Set value at path, creating depth where necessary, and call recursive dependency trigger helpers.
+     * @param {path} path - Path to set value at. Will be coerced to a string.
+     * @param {any} value - Value to set at path. Path will be deleted from the store if set to ReactiveStore.DELETE.
+     */
     _setAtPath(path, value) {
-        const pathSplit = path.split('.'),
+        const pathTokens = String(path).split('.'),
+            lastTokenIdx = (pathTokens.length - 1),
             parentDeps = [];
 
         let deps = this._rootNode.subDeps,
             search = this.data;
             
-        for (let pathIdx = 0, numTokens = pathSplit.length; pathIdx < numTokens; pathIdx++) {
-            const pathToken = pathSplit[pathIdx];
+        for (let tokenIdx = 0; tokenIdx <= lastTokenIdx; tokenIdx++) {
+            const token = pathTokens[tokenIdx];
             
-            if (pathIdx < numTokens - 1) {
-                // Parent Token: Ensure that search[pathToken] is a valid Object or Array, step into it, and store active deps
-                if (!isObject(search[pathToken]) && !Array.isArray(search[pathToken])) {
-                    search[pathToken] = {};
+            if (tokenIdx < lastTokenIdx) {
+                // Parent Token: Ensure that search[token] is traversable, step into it, and store active deps
+                if (!isTraversable(search[token])) {
+                    search[token] = {};
                 }
 
-                search = search[pathToken];
+                search = search[token];
 
                 if (deps) {
-                    if (deps[pathToken]) {
+                    const depNode = deps[token];
+
+                    if (depNode) {
                         // If parent node has dependency, store it so it can be triggered after we know that 
                         // the targeted child property has definitely changed
-                        if (deps[pathToken].dep) {
-                            parentDeps.push(deps[pathToken].dep);
+                        if (depNode.dep) {
+                            parentDeps.push(depNode.dep);
                         }
                         
-                        deps = deps[pathToken].subDeps;
+                        deps = depNode.subDeps;
 
                     } else {
                         deps = null;
@@ -279,39 +348,40 @@ export default class ReactiveStore {
                 }
 
             } else {
-                // Last Token: Set/Unset search at pathToken and handle dep changes
-                const keyExists = search.hasOwnProperty(pathToken),
+                // Last Token: Set/Unset search at token and handle dep changes
+                const keyExists = search.hasOwnProperty(token),
                     unset = (value === ReactiveStore.DELETE); // Unset if value is ReactiveStore.DELETE
 
                 if (!unset || keyExists) {
-                    const oldValue = search[pathToken];
+                    const depNode = deps && deps[token],
+                        oldValue = search[token];
 
                     let changed = true;
         
                     if (unset) {
-                        // Delete pathToken if unset
-                        delete search[pathToken];
+                        // Delete token if unset
+                        delete search[token];
         
-                        // Trigger dep at pathToken and any subDeps it may have
-                        if (deps && deps[pathToken]) {
+                        // Trigger dep at token and any subDeps it may have
+                        if (depNode) {
                             if (oldValue) {
-                                this._triggerAllDeps(deps[pathToken].subDeps, oldValue);
+                                this._triggerAllDeps(depNode.subDeps, oldValue);
                             }
 
-                            this._triggerDep(deps[pathToken].dep);
+                            this._triggerDep(depNode.dep);
                         }
         
                     } else {
                         // Otherwise, set the new value
-                        search[pathToken] = value;
+                        search[token] = value;
         
                         // Starting with current dep, traverse down and trigger any deps for changed vals
-                        changed = this._triggerChangedDeps((deps ? deps[pathToken] : false), oldValue, value);
+                        changed = this._triggerChangedDeps(depNode, oldValue, value);
                     }
         
                     if (changed || !keyExists) {
                         // Trigger any active parent dependencies that were hit (in reverse order to keep dependency trigger order bottom-up)
-                        for (let i = parentDeps.length - 1; i >= 0; i--) {
+                        for (let i = (parentDeps.length - 1); i >= 0; i--) {
                             this._triggerDep(parentDeps[i]);
                         }
                         
@@ -322,6 +392,10 @@ export default class ReactiveStore {
         }
     }
 
+    /**
+     * If given dep is defined and has not already been triggered, add it to the set and trigger it.
+     * @param {Tracker.Dependency} dep - Dependency to trigger.
+     */
     _triggerDep(dep) {
         if (dep) {
             if (this._triggeredDepSet) {
@@ -334,88 +408,108 @@ export default class ReactiveStore {
         }
     }
     
-    _triggerAllDeps(deps, inObjectOrArray) {
-        if (deps && (inObjectOrArray === undefined || isObject(inObjectOrArray) || Array.isArray(inObjectOrArray))) {
+    /**
+     * Recursively traverse down deps and trigger all existing dependencies.
+     * @param {Object.<string, DepNode>} deps - key -> DepNode map to traverse through.
+     * @param {Object|Array} [keyFilter] - If defined, this will be traversed in tandem with deps and only shared keys at each level will be triggered.
+     *      Traversal branches will also be stopped early if there are no more levels to traverse in keyFilter.
+     */
+    _triggerAllDeps(deps, keyFilter) {
+        if (deps && (keyFilter === undefined || isObject(keyFilter) || Array.isArray(keyFilter))) {
             for (const key of Object.keys(deps)) {
-                if (!inObjectOrArray || inObjectOrArray.hasOwnProperty(key)) {
-                    let inObjectOrArrayAtKey;
+                if (!keyFilter || keyFilter.hasOwnProperty(key)) {
+                    let keyFilterAtKey;
                     
-                    if (inObjectOrArray) {
-                        inObjectOrArrayAtKey = inObjectOrArray[key] || null;
+                    if (keyFilter) {
+                        keyFilterAtKey = keyFilter[key] || null;
                     }
     
-                    this._triggerAllDeps(deps[key].subDeps, inObjectOrArrayAtKey);
+                    this._triggerAllDeps(deps[key].subDeps, keyFilterAtKey);
                     this._triggerDep(deps[key].dep);
                 }
             }
-    
-            return true;
         }
     }
     
+    /**
+     * Check for changes between oldValue and newValue and recursively traverse down to check/trigger
+     * deep dependency changes if necessary.
+     * @param {DepNode} depNode - DepNode for the current traversal level.
+     * @param {any} oldValue
+     * @param {any} newValue
+     * @returns {boolean} True if value has changed.
+     */
     _triggerChangedDeps(depNode, oldValue, newValue) {
-        const subDeps = depNode ? depNode.subDeps : false,
-            newValueIsObjectOrArray = isObject(newValue) || Array.isArray(newValue);
+        const newValueIsTraversable = isTraversable(newValue),
+            subDeps = depNode && depNode.subDeps;
 
         let searchedForChangedSubDeps = false,
             changed = false;
     
         if (oldValue instanceof Object) {
-            if (oldValue !== newValue) {
-                const oldConstructor = oldValue.constructor;
-    
-                if (oldConstructor === Object || oldConstructor === Array) {
-                    // If oldValue is an Object or Array, iterate through its keys/vals and recursively trigger subDeps
-                    const keys = new Set(Object.keys(oldValue));
+            // oldValue is instantiated reference 
+            if (oldValue === newValue) {    
+                // Cannot check for differences if oldValue and newValue are literally the same reference, so assume changed.
+                changed = true;
 
-                    if (newValueIsObjectOrArray) {
-                        const newValueKeys = Object.keys(newValue);
+            } else if (isTraversable(oldValue)) {
+                // If oldValue is traversable, iterate through its keys/vals and recursively trigger subDeps
+                const keys = new Set(Object.keys(oldValue));
 
-                        changed = (keys.size !== newValueKeys.length);
+                if (!(newValue instanceof oldValue.constructor)) {
+                    changed = true;
+                }
 
-                        for (const subKey of newValueKeys) {
-                            keys.add(subKey);
-                        }
+                if (newValueIsTraversable) {
+                    // If newValue is also traversable, extend keys Set with all new keys
+                    const newValueKeys = Object.keys(newValue);
 
-                    } else {
+                    if (!changed && keys.size !== newValueKeys.length) {
                         changed = true;
                     }
 
-                    if (keys.size) {
-                        // If the old Object/Array was not empty, iterate through its keys and check for deep changes
-                        for (const subKey of keys) {
-                            const subDepNode = subDeps ? subDeps[subKey] : false;
-
-                            // If we already know that oldValue has changed, only keep traversing if there are unchecked sub-dependencies
-                            if (changed) {
-                                if (!subDeps) break;
-                                if (!subDepNode) continue;
-                            }
-
-                            const subDepsChanged = this._triggerChangedDeps(subDepNode, oldValue[subKey], newValueIsObjectOrArray ? newValue[subKey] : undefined);
-
-                            if (!searchedForChangedSubDeps) searchedForChangedSubDeps = true;
-                            if (subDepsChanged && !changed) changed = true;                            
-                        }
+                    for (const subKey of newValueKeys) {
+                        keys.add(subKey);
                     }
-                    
-                } else {
-                    // If there is a custom equality check for the oldValue's instance type (e.g. Set, Date, etc), run that
-                    changed = !customEqChecks[oldConstructor.name] || !customEqChecks[oldConstructor.name](oldValue, newValue);
                 }
 
+                // Iterate through all unique keys between the old/new values and check for deep changes
+                for (const key of keys) {
+                    const subDepNode = subDeps && subDeps[key];
+
+                    // If we already know that oldValue has changed, only keep traversing if there are unchecked sub-dependencies
+                    if (changed) {
+                        if (!subDeps) break;
+                        if (!subDepNode) continue;
+                    }
+
+                    const newValueAtKey = newValueIsTraversable ? newValue[key] : undefined,
+                        subDepsChanged = this._triggerChangedDeps(subDepNode, oldValue[key], newValueAtKey);
+
+                    if (!searchedForChangedSubDeps) {
+                        searchedForChangedSubDeps = true;
+                    }
+                    
+                    if (!changed && subDepsChanged) {
+                        changed = true;
+                    }
+                }
+                
             } else {
-                // If oldValue and newValue share a reference, there is no reliable way to check for changes because keys could have been modified.
-                // In this case, we assume the value has changed in some way.
-                changed = true;
+                // Run custom equality check for the oldValue's instance type (e.g. Set, Date, etc) if there is one
+                const isEqual = ReactiveStore.customEqChecks[oldValue.constructor.name];
+
+                if (!isEqual || !isEqual(oldValue, newValue)) {
+                    changed = true;
+                }
             }
 
-        } else {
-            // For primitives or null, just perform basic equivalency check
-            changed = (oldValue !== newValue);
+        } else if (oldValue !== newValue) {
+            // oldValue is primitive/null: perform basic equivalency check
+            changed = true;
         }
 
-        if (newValueIsObjectOrArray && !searchedForChangedSubDeps) {
+        if (newValueIsTraversable && !searchedForChangedSubDeps) {
             this._triggerAllDeps(subDeps, newValue);
         }
         
