@@ -2,7 +2,7 @@ import { Tracker } from 'meteor/tracker';
 import { Spacebars } from 'meteor/spacebars';
 
 /**
- * Dot-noted path string.
+ * Dot-notated path string.
  * @typedef path
  * @type {string}
  * 
@@ -76,12 +76,12 @@ export default class ReactiveStore {
     };
 
     // Add custom equality check for instances of the given constuctor
-    static addEqualityCheck(constructor, eqCheck) {
-        if (!(constructor instanceof Function) || !(eqCheck instanceof Function) || eqCheck.length !== 2) {
+    static addEqualityCheck(constructor, isEqual) {
+        if (!(constructor instanceof Function) || !(isEqual instanceof Function) || isEqual.length !== 2) {
             throw new Error('You must provide a valid constructor function/class and an equality check function that takes two parameters (oldValue, newValue).');
         }
 
-        ReactiveStore.customEqChecks[constructor.name] = eqCheck;
+        ReactiveStore.customEqChecks[constructor.name] = isEqual;
     }
 
     // Remove custom equality check for instances of the given constuctor
