@@ -47,6 +47,8 @@ export default class ReactiveStore {
         this._rootNode = ensureDepNode(this._deps, 'root');
         this._isTraversable = isTraversable(data);
         this._mutators = isObject(mutators) ? mutators : {};
+        this._changeData = { deps: new Set(), opCount: 0 };
+        this._pathTokensCache = {};
         
         this.data = data;
     }
@@ -131,18 +133,23 @@ export default class ReactiveStore {
 
         if (path && path.constructor === String) {
             // Search down path for value while tracking dependencies (if reactive)
-            const pathTokens = path.split('.');
+            let pathTokens = this._pathTokensCache[path];
+            
+            // Cache split path tokens for faster access on reruns
+            if (!pathTokens) {
+                pathTokens = path.split('.');
+                this._pathTokensCache[path] = pathTokens;
+            }
 
             let deps = this._rootNode.subDeps;
 
-            for (let i = 0, numTokens = pathTokens.length; i < numTokens; i++) {
+            for (let i = 0, numTokens = pathTokens.length, lastTokenIdx = (numTokens - 1); i < numTokens; i++) {
                 const tokenName = pathTokens[i];
 
                 if (reactive) {
-                    const isLastToken = (i === numTokens - 1),
-                        depNode = ensureDepNode(deps, tokenName);
+                    const depNode = ensureDepNode(deps, tokenName);
 
-                    if (isLastToken) {
+                    if (i === lastTokenIdx) {
                         ensureDep(depNode).depend();
                     }
                     
@@ -178,30 +185,32 @@ export default class ReactiveStore {
         this._isTraversable = isTraversable(value);
         this.data = value;
 
-        if (wasTraversable) {
-            // Old root value was previously traversable: check for deep dependency changes
-            this._triggerChangedDeps(this._rootNode, oldValue, value);
-            
-        } else {
-            // If new value is traversable, trigger all existing deps that are set in it
-            if (this._isTraversable) {
-                this._triggerAllDeps(this._rootNode.subDeps, value);
-            }
-
-            // Trigger root dep if values are not equal or they both reference the same instance and, either there is no custom equality check, or they do not pass it
-            if (
-                (value !== oldValue)
-                || (
-                    (oldValue instanceof Object)
-                    && (
-                        !ReactiveStore.customEqChecks[oldValue.constructor.name]
-                        || !ReactiveStore.customEqChecks[oldValue.constructor.name](oldValue, value)
+        this._watchChanges(() => {
+            if (wasTraversable) {
+                // Old root value was previously traversable: check for deep dependency changes
+                this._triggerChangedDeps(this._rootNode, oldValue, value);
+                
+            } else {
+                // If new value is traversable, trigger all existing deps that are set in it
+                if (this._isTraversable) {
+                    this._triggerAllDeps(this._rootNode.subDeps, value);
+                }
+    
+                // Trigger root dep if values are not equal or they both reference the same instance and, either there is no custom equality check, or they do not pass it
+                if (
+                    (value !== oldValue)
+                    || (
+                        (oldValue instanceof Object)
+                        && (
+                            !ReactiveStore.customEqChecks[oldValue.constructor.name]
+                            || !ReactiveStore.customEqChecks[oldValue.constructor.name](oldValue, value)
+                        )
                     )
-                )
-            ) {
-                this._triggerDep(this._rootNode.dep);
+                ) {
+                    this._registerChange(this._rootNode.dep);
+                }
             }
-        }
+        });
     }
 
     /**
@@ -218,37 +227,35 @@ export default class ReactiveStore {
             this.data = {};
         }
 
-        if (isObject(pathOrMap)) {
-            // pathOrMap is path -> value map
-            const paths = Object.keys(pathOrMap);
+        this._watchChanges(() => {
+            if (isObject(pathOrMap)) {
+                // pathOrMap is path -> value map
+                const paths = Object.keys(pathOrMap);
+        
+                for (const path of paths) {
+                    const pathMutator = this._mutators[path];
+        
+                    // Run mutator function for path if there is one
+                    if (pathMutator instanceof Function) {
+                        this._setAtPath(path, pathMutator(pathOrMap[path], this));
+                    } else {
+                        this._setAtPath(path, pathOrMap[path]);
+                    }
+                }
 
-            this._triggeredDepSet = new Set();
-    
-            for (const path of paths) {
-                const pathMutator = this._mutators[path];
-    
+            } else {
+                // Assume pathOrMap is path string
+                const path = pathOrMap,
+                    pathMutator = this._mutators[path];
+                
                 // Run mutator function for path if there is one
                 if (pathMutator instanceof Function) {
-                    this._setAtPath(path, pathMutator(pathOrMap[path], this));
+                    this._setAtPath(path, pathMutator(value, this));
                 } else {
-                    this._setAtPath(path, pathOrMap[path]);
+                    this._setAtPath(path, value);
                 }
             }
-    
-            delete this._triggeredDepSet;
-
-        } else {
-            // Assume pathOrMap is path string
-            const path = pathOrMap,
-                pathMutator = this._mutators[path];
-            
-            // Run mutator function for path if there is one
-            if (pathMutator instanceof Function) {
-                this._setAtPath(path, pathMutator(value, this));
-            } else {
-                this._setAtPath(path, value);
-            }
-        }       
+        });
     }
     
     /**
@@ -257,17 +264,13 @@ export default class ReactiveStore {
      */
     delete(...paths) {
         // Only run if root data is traversable
-        if (this._isTraversable) return;
+        if (!this._isTraversable) return;
 
-        if (paths.length > 1) {
-            this._triggeredDepSet = new Set();
-        }
-
-        for (const path of paths) {
-            this._setAtPath(path, ReactiveStore.DELETE);
-        }
-
-        delete this._triggeredDepSet;
+        this._watchChanges(() => {
+            for (const path of paths) {
+                this._setAtPath(path, ReactiveStore.DELETE);
+            }
+        });
     }
 
     /**
@@ -368,7 +371,7 @@ export default class ReactiveStore {
                                 this._triggerAllDeps(depNode.subDeps, oldValue);
                             }
 
-                            this._triggerDep(depNode.dep);
+                            this._registerChange(depNode.dep);
                         }
         
                     } else {
@@ -380,12 +383,12 @@ export default class ReactiveStore {
                     }
         
                     if (changed || !keyExists) {
-                        // Trigger any active parent dependencies that were hit (in reverse order to keep dependency trigger order bottom-up)
-                        for (let i = (parentDeps.length - 1); i >= 0; i--) {
-                            this._triggerDep(parentDeps[i]);
+                        // Trigger any active parent dependencies that were hit
+                        for (const dep of parentDeps) {
+                            this._registerChange(dep);
                         }
                         
-                        this._triggerDep(this._rootNode.dep);
+                        this._registerChange(this._rootNode.dep);
                     }
                 }
             }
@@ -393,18 +396,33 @@ export default class ReactiveStore {
     }
 
     /**
-     * If given dep is defined and has not already been triggered, add it to the set and trigger it.
-     * @param {Tracker.Dependency} dep - Dependency to trigger.
+     * Wrapper to track changed dependencies within the given operation and then trigger all of them at once after there are no more operations pending.
+     * @param {Function} op - Operation to run.
      */
-    _triggerDep(dep) {
-        if (dep) {
-            if (this._triggeredDepSet) {
-                if (this._triggeredDepSet.has(dep)) return;
+    _watchChanges(op) {
+        this._changeData.opCount++;
 
-                this._triggeredDepSet.add(dep);
+        op();
+
+        this._changeData.opCount--;
+
+        // Once there are no more ops running, trigger all changed deps and clear the set
+        if (!this._changeData.opCount && this._changeData.deps.size) {
+            for (const dep of this._changeData.deps) {
+                dep.changed();
             }
 
-            dep.changed();
+            this._changeData.deps = new Set();
+        }
+    }
+
+    /**
+     * If given dep is defined, add it to the change data set to be processed after ops have completed.
+     * @param {Tracker.Dependency} dep - Dependency to register.
+     */
+    _registerChange(dep) {
+        if (dep) {
+            this._changeData.deps.add(dep);
         }
     }
     
@@ -425,7 +443,7 @@ export default class ReactiveStore {
                     }
     
                     this._triggerAllDeps(deps[key].subDeps, keyFilterAtKey);
-                    this._triggerDep(deps[key].dep);
+                    this._registerChange(deps[key].dep);
                 }
             }
         }
@@ -514,7 +532,7 @@ export default class ReactiveStore {
         }
         
         if (changed && depNode) {
-            this._triggerDep(depNode.dep);
+            this._registerChange(depNode.dep);
         }
     
         return changed;

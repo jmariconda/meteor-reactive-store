@@ -1,6 +1,6 @@
 {
   "name": "meteor-reactive-store",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Reactive Store is a reactive data type for Meteor that supports deep dependency tracking.",
   "main": "package.js",
   "dependencies": {},

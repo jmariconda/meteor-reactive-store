@@ -2,7 +2,7 @@ import ReactiveStore from 'meteor/jmaric:deep-reactive-store';
 import { Tracker } from 'meteor/tracker';
 import assert from 'assert';
 
-const afterFlushAsync = () => new Promise(resolve => Tracker.afterFlush(resolve));
+const nextFlush = () => new Promise(resolve => Tracker.afterFlush(resolve));
 
 describe('ReactiveStore', () => {
     describe('#get', () => {
@@ -23,7 +23,7 @@ describe('ReactiveStore', () => {
 
                 // Root value should be reset to null and autorun should run once
                 test.set(null);
-                await afterFlushAsync();
+                await nextFlush();
                 assert.equal(ran, 1);
                 assert.equal(currentVal, null);
                 assert.equal(currentVal, test.data);
@@ -33,7 +33,7 @@ describe('ReactiveStore', () => {
                 ran = 0;
 
                 test.set({ test: { deep: true } });
-                await afterFlushAsync();
+                await nextFlush();
                 assert.equal(ran, 1);
                 assert.deepEqual(currentVal, { test: { deep: true } });
                 assert.deepEqual(currentVal, test.data);
@@ -46,8 +46,7 @@ describe('ReactiveStore', () => {
                     'test.another.prop': true,
                     'another.deep.field': 1
                 });
-                await afterFlushAsync();
-                await afterFlushAsync();
+                await nextFlush();
                 assert.equal(ran, 1);
                 assert.deepEqual(currentVal, {
                     test: { deep: true, another: { prop: true } },
@@ -62,7 +61,7 @@ describe('ReactiveStore', () => {
                     'test': { deep: true, another: { prop: true } },
                     'another.deep': { field: 1 }
                 });
-                await afterFlushAsync();
+                await nextFlush();
                 assert.equal(ran, 0);
                 assert.deepEqual(currentVal, {
                     test: { deep: true, another: { prop: true } },
@@ -75,8 +74,7 @@ describe('ReactiveStore', () => {
                 ran = 0;
 
                 test.delete('test.another.prop', 'another.deep.field');
-                await afterFlushAsync();
-                await afterFlushAsync();
+                await nextFlush();
                 assert.equal(ran, 1);
                 assert.deepEqual(currentVal, {
                     test: { deep: true, another: {} },
@@ -89,7 +87,7 @@ describe('ReactiveStore', () => {
                 ran = 0;
 
                 test.clear();
-                await afterFlushAsync();
+                await nextFlush();
                 assert.equal(ran, 1);
                 assert.deepEqual(currentVal, {});
                 assert.deepEqual(currentVal, test.data);               
