@@ -131,15 +131,9 @@ export default class ReactiveStore {
         let search = this.data,
             validPath = true;
 
-        if (path && path.constructor === String) {
+        if (path != null) {
             // Search down path for value while tracking dependencies (if reactive)
-            let pathTokens = this._pathTokensCache[path];
-            
-            // Cache split path tokens for faster access on reruns
-            if (!pathTokens) {
-                pathTokens = path.split('.');
-                this._pathTokensCache[path] = pathTokens;
-            }
+            const pathTokens = this._getPathTokens(String(path));
 
             let deps = this._rootNode.subDeps;
 
@@ -315,7 +309,8 @@ export default class ReactiveStore {
      * @param {any} value - Value to set at path. Path will be deleted from the store if set to ReactiveStore.DELETE.
      */
     _setAtPath(path, value) {
-        const pathTokens = String(path).split('.'),
+        const unset = (value === ReactiveStore.DELETE), // Unset if value is ReactiveStore.DELETE
+            pathTokens = this._getPathTokens(String(path)),
             lastTokenIdx = (pathTokens.length - 1),
             parentDeps = [];
 
@@ -328,6 +323,9 @@ export default class ReactiveStore {
             if (tokenIdx < lastTokenIdx) {
                 // Parent Token: Ensure that search[token] is traversable, step into it, and store active deps
                 if (!isTraversable(search[token])) {
+                    // Cancel the operation if this is an unset because the path doesn't exist
+                    if (unset) return;
+
                     search[token] = {};
                 }
 
@@ -352,8 +350,7 @@ export default class ReactiveStore {
 
             } else {
                 // Last Token: Set/Unset search at token and handle dep changes
-                const keyExists = search.hasOwnProperty(token),
-                    unset = (value === ReactiveStore.DELETE); // Unset if value is ReactiveStore.DELETE
+                const keyExists = search.hasOwnProperty(token);
 
                 if (!unset || keyExists) {
                     const depNode = deps && deps[token],
@@ -536,5 +533,18 @@ export default class ReactiveStore {
         }
     
         return changed;
+    }
+
+    /**
+     * Cache split path tokens if necessary and then return them.
+     * @param {path} path - Dot-notated path string to get tokens for.
+     */
+    _getPathTokens(path) {            
+        // Cache split path tokens for faster access on reruns
+        if (!this._pathTokensCache[path]) {
+            this._pathTokensCache[path] = path.split('.');
+        }
+
+        return this._pathTokensCache[path];
     }
 }
