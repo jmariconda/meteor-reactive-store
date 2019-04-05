@@ -196,31 +196,13 @@ export default class ReactiveStore {
 
         this._watchChanges(() => {
             if (isObject(pathOrMap)) {
-                // pathOrMap is path -> value map
-                const paths = Object.keys(pathOrMap);
-        
-                for (const path of paths) {
-                    const pathMutator = this._mutators[path];
-        
-                    // Run mutator function for path if there is one
-                    if (pathMutator instanceof Function) {
-                        this._setAtPath(path, pathMutator(pathOrMap[path], this));
-                    } else {
-                        this._setAtPath(path, pathOrMap[path]);
-                    }
+                // pathOrMap is path -> value map        
+                for (const path of Object.keys(pathOrMap)) {        
+                    this._setAtPath(path, pathOrMap[path]);
                 }
-
             } else {
-                // Assume pathOrMap is path string
-                const path = pathOrMap,
-                    pathMutator = this._mutators[path];
-                
-                // Run mutator function for path if there is one
-                if (pathMutator instanceof Function) {
-                    this._setAtPath(path, pathMutator(value, this));
-                } else {
-                    this._setAtPath(path, value);
-                }
+                // Assume pathOrMap is path string and use second param as value
+                this._setAtPath(pathOrMap, value);
             }
         });
     }
@@ -282,6 +264,11 @@ export default class ReactiveStore {
      * @param {any} value - Value to set at path. Path will be deleted from the store if set to ReactiveStore.DELETE.
      */
     _setAtPath(path, value) {
+        // Mutate value if there is a mutator function for the path        
+        if (this._mutators[path] instanceof Function) {
+            value = this._mutators[path](value, this);
+        }
+
         const unset = (value === ReactiveStore.DELETE), // Unset if value is ReactiveStore.DELETE
             pathTokens = this._getPathTokens(path),
             lastTokenIdx = (pathTokens.length - 1),
