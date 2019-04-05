@@ -406,7 +406,7 @@ export default class ReactiveStore {
         let newValueTraversed = false,
             changed = false;
     
-        if ((oldValue instanceof Object) && (newValue instanceof Object)) {
+        if (oldValue instanceof Object) {
             // oldValue is instantiated reference 
             if (oldValue === newValue) {
                 // Cannot check for differences if oldValue and newValue are literally the same reference, so assume changed.
@@ -417,15 +417,12 @@ export default class ReactiveStore {
                 const newValueIsTraversable = isTraversable(newValue),
                     keySet = new Set(Object.keys(oldValue));
 
-                if (oldValue.constructor !== newValue.constructor) {
-                    changed = true;
-                }
-
                 if (newValueIsTraversable) {
                     // If newValue is also traversable, add its keys to the keySet
                     const newValueKeys = Object.keys(newValue);
 
-                    if (!changed && keySet.size !== newValueKeys.length) {
+                    // Definitely changed if values don't share the same constructor or have a different amount of keys
+                    if (oldValue.constructor !== newValue.constructor || keySet.size !== newValueKeys.length) {
                         changed = true;
                     }
 
@@ -435,6 +432,9 @@ export default class ReactiveStore {
 
                     // Set newValueTraversed to true so that _triggerAllDeps check below is skipped
                     newValueTraversed = true;
+                } else {
+                    // Definitely changed if newValue is not traversable
+                    changed = true;
                 }
 
                 // If we already know that value has changed, only keep traversing if there are unchecked sub-dependencies
@@ -454,7 +454,6 @@ export default class ReactiveStore {
                         }                        
                     }
                 }
-                
                 
             } else {
                 // Run custom equality check for the oldValue's instance type (e.g. Set, Date, etc) if there is one

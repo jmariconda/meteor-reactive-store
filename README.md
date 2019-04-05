@@ -79,10 +79,11 @@ const store = new ReactiveStore({
 });
 
 // Reactively get the root value of the store
+// This will rerun when inside of an active Tracker context and the root value changes (via set method)
 store.get()
 
 // Reactively get some deep value from the store
-// This will be rerun (if inside of an active Tracker context) whenever the value changes (directly or indirectly)
+// This will rerun when inside of an active Tracker context and the value at the given path changes (directly or indirectly)
 store.get('some.deep.value')
 
 // Safe non-reactive get (if you do not know the field exists)
