@@ -56,7 +56,7 @@ export default class ReactiveStore {
     // Symbol that can be assigned to path to delete it from the store
     static DELETE = Symbol('DELETE_PATH');
 
-    // Map of constructor names to equality check functions
+    // WeakMap of constructors to equality check functions
     static customEqChecks = new WeakMap([
         [
             Set, function (oldSet, newSet) {
@@ -223,19 +223,11 @@ export default class ReactiveStore {
     }
 
     /**
-     * Reset root data based on current type.
+     * If root data is currently traversable, set it to a new instance of the current constructor.
+     * Otherwise, set it to undefined.
      */
     clear() {
-        let newRoot;
-
-        // If root data is currently an Object or Array, reset it to empty Object/Array respectively
-        if (isObject(this.data)) {
-            newRoot = [];
-        } else if (Array.isArray(this.data)) {
-            newRoot = {};
-        }
-
-        this.set(newRoot);
+        this.set(this._isTraversable ? new this.data.constructor() : undefined);
     }
 
     /**
