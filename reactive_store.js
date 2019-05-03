@@ -27,7 +27,7 @@ import {
  * @returns {any} Mutated value
  * 
  * @typedef queryOptions
- * @type {Object}
+ * @type {Object|Spacebars.kw}
  * @property {boolean} [reactive=true] - If true, a dependency will be registered and tracked for the targeted path.
  */
 
@@ -92,23 +92,46 @@ export default class ReactiveStore {
         ReactiveStore.customEqChecks.delete(constructor);
     }
 
-    /** 
-     * Get value at path (or root if no path is given) and register related dependency if reactive.
-     * @param {path|queryOptions} pathOrOptions - Path or options object.
-     * @param {queryOptions} [options] - Options object (only used if path is provided as first parameter).
+    /**
+     * @function get - Get value at root (and register dependency if reactive)
+     * 
+     * @param {queryOptions} [options] - Query options.
+     * @returns {any} Current value at root.
+     *//**
+     * @function get - Get value at path (and register dependency if reactive)
+     * 
+     * @param {path} path - Path of store value.
+     * @param {queryOptions} [options] - Query options.
+     * @returns {any} Current value at path.
      */
-    get(pathOrOptions, options) {
-        let path = pathOrOptions;
+    get(...params) {
+        // Interpret params based on length and contents
+        let path, options;
 
-        if (isObject(pathOrOptions) || (pathOrOptions instanceof Spacebars.kw)) {
-            // Assume first param is options object if it is an Object or Spacebars.kw 
-            options = (pathOrOptions instanceof Spacebars.kw) ? pathOrOptions.hash : pathOrOptions;
-            path = null;
+        if (params.length > 1) {
+            // Two-parameter configs
+            if (isObject(params[1])) {
+                ([path, options] = params);
+            } else if (params[1] instanceof Spacebars.kw) {
+                ([path, { hash: options }] = params);
+            } else {
+                ([path] = params);
+            }
+        } else {
+            // One-parameter configs
+            const [param] = params;
 
-        } else if (!isObject(options)) {
-            // Use the internal hash object if options is a Spacebars.kw instance
-            options = (options instanceof Spacebars.kw) ? options.hash : {};
+            if (isObject(param)) {
+                options = param;
+            } else if (param instanceof Spacebars.kw) {
+                options = param.hash;
+            } else {
+                path = param;
+            }
         }
+
+        // Init options object if it hasn't been already
+        if (!options) options = {};
 
         // Set default option values if they are not set
         if (!options.hasOwnProperty('reactive')) {
@@ -126,16 +149,25 @@ export default class ReactiveStore {
     }
 
     /**
+     * @function equals - Check equality of root against comparison value (and register equality dependency if reactive)
      * 
-     * @param  {} params 
+     * @param {any} value - Value to compare to.
+     * @param {queryOptions} [options] - Query options.
+     * @returns {boolean} Whether or not values are equal.
+     *//**
+     * @function equals - Check equality of value at path against comparison value (and register equality dependency if reactive)
+     * 
+     * @param {path} path - Path of store value.
+     * @param {any} value - Value to compare to.
+     * @param {queryOptions} [options] - Query options../run    
+     * @returns {boolean} Whether or not values are equal. 
      */
     equals(...params) {
+        // Interpret params based on length and contents
         let path, value, options;
 
-        if (params.length === 1) {
-            ([value] = params);
-
-        } else if (params.length === 2) {
+        if (params.length === 2) {
+            // Two-parameter configs
             if (isObject(params[1])) {
                 ([value, options] = params);
             } else if (params[1] instanceof Spacebars.kw) {
@@ -143,19 +175,21 @@ export default class ReactiveStore {
             } else {
                 ([path, value] = params);
             }
-
-        } else if (params.length === 3) {
+        } else if (params.length > 2) {
+            // Three-parameter config
             ([path, value, options] = params);
+        } else {
+            // One-parameter config
+            ([value] = params);
         }
 
+        // Throw error if value is not primitive
         if (value instanceof Object) {
-            throw new Error('ReactiveStore: Only primitive values can be used in the equals function (number, string, boolean, undefined, null, Symbol).');
+            throw new Error('ReactiveStore: Only primitive values can be registered as equality dependencies (number, string, boolean, undefined, null, Symbol).');
         }
 
         // Init options object if it hasn't been already
-        if (!options) {
-            options = {};
-        }
+        if (!options) options = {};
 
         // Set default option values if they are not set
         if (!options.hasOwnProperty('reactive')) {
