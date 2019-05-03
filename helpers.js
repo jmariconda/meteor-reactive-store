@@ -21,15 +21,15 @@ export function ensureEqDep(depNode, depValue, curValue) {
         depNode.eqDepMap = new Map();
     }
 
-    // If current value is an instantiated type, just store it as the Object constructor
-    depNode.curValue = (curValue instanceof Object) ? Object : curValue;
-
     let eqDep = depNode.eqDepMap.get(depValue);
 
     if (!eqDep) {
         eqDep = new Tracker.Dependency();
-        eqDep.wasEqual = (depNode.curValue === depValue);
         depNode.eqDepMap.set(depValue, eqDep);
+    }
+
+    if (curValue === depValue) {
+        depNode.activeEqDep = eqDep;
     }
     
     return eqDep;

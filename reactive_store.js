@@ -25,6 +25,10 @@ import {
  * @param {any} value - Assigned value
  * @param {ReactiveStore} store - Current ReactiveStore instance
  * @returns {any} Mutated value
+ * 
+ * @typedef queryOptions
+ * @type {Object}
+ * @property {boolean} [reactive=true] - If true, a dependency will be registered and tracked for the targeted path.
  */
 
 export default class ReactiveStore {
@@ -88,14 +92,10 @@ export default class ReactiveStore {
         ReactiveStore.customEqChecks.delete(constructor);
     }
 
-    /**
-     * @typedef getOptions
-     * @type {Object}
-     * @property {boolean} [reactive=true] - If true, a dependency will be registered and tracked for the targeted path.
-     * 
+    /** 
      * Get value at path (or root if no path is given) and register related dependency if reactive.
-     * @param {path|getOptions} pathOrOptions - Path or options object.
-     * @param {getOptions} [options] - Options object (only used if path is provided as first parameter).
+     * @param {path|queryOptions} pathOrOptions - Path or options object.
+     * @param {queryOptions} [options] - Options object (only used if path is provided as first parameter).
      */
     get(pathOrOptions, options) {
         let path = pathOrOptions;
@@ -357,29 +357,26 @@ export default class ReactiveStore {
     /**
      * If given dep is defined, add it to the change data set to be processed after ops have completed.
      * @param {DepNode} depNode - Dependency Node to register.
-     * @param {any} newValue - 
+     * @param {any} newValue - New value at corresponding path in the store
      */
     _registerChange(depNode, newValue) {
         if (depNode) {
+            const changedDepSet = this._changeData.deps;
+
             if (depNode.dep) {
-                this._changeData.deps.add(depNode.dep);
+                changedDepSet.add(depNode.dep);
             }
 
             if (depNode.eqDepMap) {
-                const eqDep = depNode.eqDepMap.get(newValue);
+                const eqDep = depNode.eqDepMap.get(newValue),
+                    { activeEqDep } = depNode;
 
-                if (eqDep) {
-                    const eqChanged = (eqDep.wasEqual)
-                        ? (depNode.curValue !== newValue)
-                        : (depNode.curValue === newValue);
+                if (eqDep !== activeEqDep) {
+                    if (eqDep) changedDepSet.add(eqDep);
+                    if (activeEqDep) changedDepSet.add(activeEqDep);
 
-                    if (eqChanged) {
-                        eqDep.wasEqual = !eqDep.wasEqual;
-                        this._changeData.deps.add(eqDep);
-                    }
+                    depNode.activeEqDep = eqDep;
                 }
-
-                depNode.curValue = newValue;
             }            
         }
     }
