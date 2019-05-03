@@ -1,6 +1,13 @@
 import { Tracker } from 'meteor/tracker';
 import { Spacebars } from 'meteor/spacebars';
-
+import {
+    isObject,
+    isTraversable,
+    ensureDep,
+    ensureEqDep,
+    ensureDepNode
+} from './helpers';
+ 
 /**
  * Dot-notated path string.
  * @typedef path
@@ -19,23 +26,6 @@ import { Spacebars } from 'meteor/spacebars';
  * @param {ReactiveStore} store - Current ReactiveStore instance
  * @returns {any} Mutated value
  */
-
-const isObject = val => (val instanceof Object && val.constructor === Object),
-    isTraversable = val => (isObject(val) || Array.isArray(val)),
-    ensureDep = (depNode) => {
-        if (!depNode.dep) {
-            depNode.dep = new Tracker.Dependency();
-        }
-
-        return depNode.dep;
-    },
-    ensureDepNode = (deps, key) => {
-        if (!deps[key]) {
-            deps[key] = { subDeps: {} };
-        }
-
-        return deps[key];
-    };
 
 export default class ReactiveStore {
     /**
@@ -99,13 +89,13 @@ export default class ReactiveStore {
     }
 
     /**
-     * Get value at path (or root if no path is given) and register related dependency if reactive.
-     * @param {path|getOptions} pathOrOptions - Path or options object.
-     * @param {getOptions} [options] - Options object (only used if path is provided as first parameter).
-     * 
      * @typedef getOptions
      * @type {Object}
      * @property {boolean} [reactive=true] - If true, a dependency will be registered and tracked for the targeted path.
+     * 
+     * Get value at path (or root if no path is given) and register related dependency if reactive.
+     * @param {path|getOptions} pathOrOptions - Path or options object.
+     * @param {getOptions} [options] - Options object (only used if path is provided as first parameter).
      */
     get(pathOrOptions, options) {
         let path = pathOrOptions;
@@ -125,48 +115,61 @@ export default class ReactiveStore {
             options.reactive = true;
         }
 
-        const reactive = (Tracker.active && options.reactive);
+        const reactive = (Tracker.active && options.reactive),
+            search = this._findProperty(path, reactive);
 
-        let search = this.data,
-            pathExists = true;
+        if (reactive) {
+            ensureDep(search.depNode).depend();
+        }
 
-        if (path != null) {
-            // Search down path for value while tracking dependencies (if reactive)
-            const pathTokens = this._getPathTokens(path),
-                numTokens = pathTokens.length,
-                lastTokenIdx = (numTokens - 1);
+        return search.value;
+    }
 
-            for (let i = 0, deps = this._rootNode.subDeps; i < numTokens; i++) {
-                const token = pathTokens[i];
+    /**
+     * 
+     * @param  {} params 
+     */
+    equals(...params) {
+        let path, value, options;
 
-                if (reactive) {
-                    const depNode = ensureDepNode(deps, token);
+        if (params.length === 1) {
+            ([value] = params);
 
-                    if (i === lastTokenIdx) {
-                        ensureDep(depNode).depend();
-                    }
-                    
-                    deps = depNode.subDeps;
-                }
-
-                if (pathExists) {
-                    if (isTraversable(search)) {
-                        search = search[token];
-                    } else {
-                        pathExists = false;
-                        if (!reactive) break;
-                    }
-                }
+        } else if (params.length === 2) {
+            if (isObject(params[1])) {
+                ([value, options] = params);
+            } else if (params[1] instanceof Spacebars.kw) {
+                ([value, { hash: options }] = params);
+            } else {
+                ([path, value] = params);
             }
 
-        } else if (reactive) {
-            // Otherwise track the root dependency (if reactive)
-            ensureDep(this._rootNode).depend();
+        } else if (params.length === 3) {
+            ([path, value, options] = params);
         }
 
-        if (pathExists) {
-            return search;
+        if (value instanceof Object) {
+            throw new Error('ReactiveStore: Only primitive values can be used in the equals function (number, string, boolean, undefined, null, Symbol).');
         }
+
+        // Init options object if it hasn't been already
+        if (!options) {
+            options = {};
+        }
+
+        // Set default option values if they are not set
+        if (!options.hasOwnProperty('reactive')) {
+            options.reactive = true;
+        }
+
+        const reactive = (Tracker.active && options.reactive),
+            search = this._findProperty(path, reactive);
+
+        if (reactive) {
+            ensureEqDep(search.depNode, value, search.value).depend();
+        }
+
+        return (search.value === value);
     }
 
     /**
@@ -264,7 +267,7 @@ export default class ReactiveStore {
         const unset = (value === ReactiveStore.DELETE), // Unset if value is ReactiveStore.DELETE
             pathTokens = this._getPathTokens(path),
             lastTokenIdx = (pathTokens.length - 1),
-            parentDeps = [this._rootNode.dep];
+            parentDepNodes = [this._rootNode];
 
         let deps = this._rootNode.subDeps,
             search = this.data;
@@ -287,20 +290,15 @@ export default class ReactiveStore {
                     const depNode = deps[token];
 
                     if (depNode) {
-                        // If parent node has dependency, store it so it can be triggered after we know that 
-                        // the targeted child property has definitely changed
-                        if (depNode.dep) {
-                            parentDeps.push(depNode.dep);
-                        }
-                        
+                        // Store parent dep node so it can be triggered after we know if targeted child property has definitely changed
+                        parentDepNodes.push(depNode);                        
                         deps = depNode.subDeps;
-
                     } else {
                         deps = null;
                     }
                 }
 
-            } else if (!unset || search.hasOwnProperty(token)) {
+            } else if (!unset || search.propertyIsEnumerable(token)) {
                 // Last Token: Set/Unset search at token and handle dep changes
                 const depNode = deps && deps[token],
                     oldValue = search[token];
@@ -313,8 +311,8 @@ export default class ReactiveStore {
     
                     // Trigger dep at token and any subDeps it may have
                     if (depNode) {
-                        this._triggerAllDeps(depNode.subDeps, oldValue);
-                        this._registerChange(depNode.dep);
+                        this._triggerAllDeps(depNode.subDeps, oldValue, undefined);
+                        this._registerChange(depNode, undefined);
                     }
     
                 } else {
@@ -327,8 +325,8 @@ export default class ReactiveStore {
     
                 if (changed) {
                     // Trigger any active parent dependencies that were hit
-                    for (const dep of parentDeps) {
-                        this._registerChange(dep);
+                    for (const parentDepNode of parentDepNodes) {
+                        this._registerChange(parentDepNode, Object);
                     }
                 }
             }
@@ -358,11 +356,31 @@ export default class ReactiveStore {
 
     /**
      * If given dep is defined, add it to the change data set to be processed after ops have completed.
-     * @param {Tracker.Dependency} dep - Dependency to register.
+     * @param {DepNode} depNode - Dependency Node to register.
+     * @param {any} newValue - 
      */
-    _registerChange(dep) {
-        if (dep) {
-            this._changeData.deps.add(dep);
+    _registerChange(depNode, newValue) {
+        if (depNode) {
+            if (depNode.dep) {
+                this._changeData.deps.add(depNode.dep);
+            }
+
+            if (depNode.eqDepMap) {
+                const eqDep = depNode.eqDepMap.get(newValue);
+
+                if (eqDep) {
+                    const eqChanged = (eqDep.wasEqual)
+                        ? (depNode.curValue !== newValue)
+                        : (depNode.curValue === newValue);
+
+                    if (eqChanged) {
+                        eqDep.wasEqual = !eqDep.wasEqual;
+                        this._changeData.deps.add(eqDep);
+                    }
+                }
+
+                depNode.curValue = newValue;
+            }            
         }
     }
     
@@ -371,14 +389,21 @@ export default class ReactiveStore {
      * @param {Object.<string, DepNode>} deps - key -> DepNode map to traverse through.
      * @param {Object|Array} keyFilter - This will be traversed in tandem with deps and only shared keys at each level will be triggered.
      *      Traversal branches will also be stopped early if there are no more levels to traverse in keyFilter.
+     * @param {any} curValue - Current value at the deps corresponding level in the store. Will be traversed in tandem if traversable.
      */
-    _triggerAllDeps(deps, keyFilter) {
+    _triggerAllDeps(deps, keyFilter, curValue) {
         if (deps && isTraversable(keyFilter)) {
-            for (const key of Object.keys(deps)) {
-                this._registerChange(deps[key].dep);
+            const curValueIsTraversable = isTraversable(curValue);
 
-                if (keyFilter.hasOwnProperty(key)) {    
-                    this._triggerAllDeps(deps[key].subDeps, keyFilter[key]);
+            for (const key of Object.keys(deps)) {
+                const curValueAtKey = (curValueIsTraversable && curValue.propertyIsEnumerable(key))
+                    ? curValue[key]
+                    : undefined;
+
+                this._registerChange(deps[key], curValueAtKey);
+
+                if (keyFilter.propertyIsEnumerable(key)) {
+                    this._triggerAllDeps(deps[key].subDeps, keyFilter[key], curValueAtKey);
                 }
             }
         }
@@ -388,8 +413,8 @@ export default class ReactiveStore {
      * Check for changes between oldValue and newValue and recursively traverse down to check/trigger
      * deep dependency changes if necessary.
      * @param {DepNode} depNode - DepNode for the current traversal level.
-     * @param {any} oldValue
-     * @param {any} newValue
+     * @param {any} oldValue - Old value at current traversal level.
+     * @param {any} newValue - New value at current traversal lebel.
      * @returns {boolean} True if value has changed.
      */
     _triggerChangedDeps(depNode, oldValue, newValue) {
@@ -463,11 +488,11 @@ export default class ReactiveStore {
 
         // Trigger all deep dependencies present in newValue if it has not been traversed
         if (!newValueTraversed) {
-            this._triggerAllDeps(subDeps, newValue);
+            this._triggerAllDeps(subDeps, newValue, newValue);
         }
         
-        if (changed && depNode) {
-            this._registerChange(depNode.dep);
+        if (changed) {
+            this._registerChange(depNode, newValue);
         }
     
         return changed;
@@ -486,5 +511,43 @@ export default class ReactiveStore {
         }
 
         return this._pathTokensCache[path];
+    }
+
+    /**
+     * Attempt to traverse down current data on the given path creating dep nodes along the way (if reactive)
+     * @param {path} path - Path to find
+     * @param {boolean} [reactive] - Will be assumed to be a reactive find if true.
+     * @returns {Object} An Object with the containing the value and related dep node
+     */
+    _findProperty(path, reactive) {
+        let depNode = this._rootNode,
+            value = this.data;
+
+        if (path != null) {
+            const pathTokens = this._getPathTokens(path),
+                numTokens = pathTokens.length;
+            
+            let pathExists = true;
+        
+            for (let i = 0; i < numTokens; i++) {
+                const token = pathTokens[i];
+        
+                if (reactive) {
+                    depNode = ensureDepNode(depNode.subDeps, token);
+                }
+        
+                if (pathExists) {
+                    if (isTraversable(value) && value.propertyIsEnumerable(token)) {
+                        value = value[token];
+                    } else {
+                        pathExists = false;
+                        value = undefined;
+                        if (!reactive) break;
+                    }
+                }
+            }
+        }
+    
+        return { value, depNode };
     }
 }
