@@ -93,6 +93,10 @@ Then in any file:
         - Update current mutators with the paths in the given path-mutator map.
         - Map should be formatted as described above in the constructor documentation.
 
+    - #### noMutation(callback: _Function_)
+        - Mutations will be skipped for any assign/delete calls within the given callback.
+        - Particularly useful inside of mutator functions if you just want to assign values to other fields in the store without running any mutators they might have.
+
     - #### removeMutators(...paths: _String_)
         - Remove any mutators associated with the given paths.
 
@@ -186,6 +190,13 @@ store.updateMutators({
         // ...
     },
     // ...
+})
+
+// Skip mutations
+store.noMutation(() => {
+    // No mutators will run while inside this callback
+    store.assign('another.deep.field', 1);
+    store.delete('some.deep.path');
 })
 
 // Remove mutator(s)

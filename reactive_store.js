@@ -3,25 +3,21 @@ import { Spacebars } from 'meteor/spacebars';
 import { isObject, isTraversable, ensureDepNode } from './helpers';
  
 /**
- * Dot-notated path string.
- * @typedef path
+ * @typedef path - Dot-notated path string.
  * @type {string}
  * 
- * Dependency node object.
- * @typedef DepNode
+ * @typedef DepNode - Dependency node object.
  * @type {Object}
  * @property {Tracker.Dependency} [dep] - Tracker dependency associated with this node.
  * @property {Object.<string, DepNode>} subDeps - Map of subKeys -> subDepNodes
  * 
- * Assignment mutator function.
- * @typedef Mutator
+ * @typedef Mutator - Assignment mutator function.
  * @type {Function}
  * @param {any} value - Assigned value
  * @param {ReactiveStore} store - Current ReactiveStore instance
  * @returns {any} Mutated value
  * 
- * Options for get/equals queries.
- * @typedef QueryOptions
+ * @typedef QueryOptions - Options for get/equals queries.
  * @type {Object|Spacebars.kw}
  * @property {boolean} [reactive=true] - If true, a dependency will be registered and tracked for the targeted path.
  */
@@ -39,6 +35,7 @@ export default class ReactiveStore {
         this._rootNode = ensureDepNode(this._deps, 'root');
         this._isTraversable = isTraversable(data);
         this._mutators = isObject(mutators) ? mutators : {};
+        this._noMutate = false;
         this._changeData = { deps: new Set(), opCount: 0 };
         this._pathTokensCache = {};
         
@@ -297,6 +294,16 @@ export default class ReactiveStore {
     }
 
     /**
+     * Sets the _noMutate flag so that any assignments that happen within the given operation will skip mutations.
+     * @param {Function} op - Operation to run without mutations. 
+     */
+    noMutation(op) {
+        this._noMutate = true;
+        op();
+        this._noMutate = false;
+    }
+
+    /**
      * Delete mutators for given path(s).
      * @param {...path} paths - Paths to delete from _mutators.
      */
@@ -312,8 +319,8 @@ export default class ReactiveStore {
      * @param {any} value - Value to set at path. Path will be deleted from the store if set to ReactiveStore.DELETE.
      */
     _setAtPath(path, value) {
-        // Mutate value if there is a mutator function for the path        
-        if (this._mutators[path] instanceof Function) {
+        // Mutate value if the _noMutate flag is not set and there is a mutator function for the path        
+        if (!this._noMutate && this._mutators[path] instanceof Function) {
             value = this._mutators[path](value, this);
         }
 
