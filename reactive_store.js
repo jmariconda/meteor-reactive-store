@@ -1,12 +1,6 @@
 import { Tracker } from 'meteor/tracker';
 import { Spacebars } from 'meteor/spacebars';
-import {
-    isObject,
-    isTraversable,
-    ensureDep,
-    ensureEqDep,
-    ensureDepNode
-} from './helpers';
+import { isObject, isTraversable, ensureDepNode } from './helpers';
  
 /**
  * Dot-notated path string.
@@ -26,11 +20,15 @@ import {
  * @param {ReactiveStore} store - Current ReactiveStore instance
  * @returns {any} Mutated value
  * 
- * @typedef queryOptions
+ * Options for get/equals queries.
+ * @typedef QueryOptions
  * @type {Object|Spacebars.kw}
  * @property {boolean} [reactive=true] - If true, a dependency will be registered and tracked for the targeted path.
  */
 
+/**
+ * @class ReactiveStore
+ */
 export default class ReactiveStore {
     /**
      * @param {any} data - Initial root value.
@@ -50,8 +48,8 @@ export default class ReactiveStore {
     // Symbol that can be assigned to path to delete it from the store
     static DELETE = Symbol('DELETE_PATH');
 
-    // WeakMap of constructors to equality check functions
-    static customEqChecks = new WeakMap([
+    // Map of constructors to equality check functions
+    static eqCheckMap = new Map([
         [
             Set, function (oldSet, newSet) {
                 let equal = (newSet instanceof Set && newSet.size === oldSet.size);
@@ -80,7 +78,7 @@ export default class ReactiveStore {
             throw new Error('You must provide a valid constructor function/class and an equality check function that takes two parameters (oldValue, newValue).');
         }
 
-        ReactiveStore.customEqChecks.set(constructor, isEqual);
+        ReactiveStore.eqCheckMap.set(constructor, isEqual);
     }
 
     // Remove custom equality check for instances of the given constuctor
@@ -89,19 +87,19 @@ export default class ReactiveStore {
             throw new Error('You must provide a valid constructor function/class.');
         }
 
-        ReactiveStore.customEqChecks.delete(constructor);
+        ReactiveStore.eqCheckMap.delete(constructor);
     }
 
     /**
      * @function get - Get value at root (and register dependency if reactive)
      * 
-     * @param {queryOptions} [options] - Query options.
+     * @param {QueryOptions} [options] - Query options.
      * @returns {any} Current value at root.
      *//**
      * @function get - Get value at path (and register dependency if reactive)
      * 
      * @param {path} path - Path of store value.
-     * @param {queryOptions} [options] - Query options.
+     * @param {QueryOptions} [options] - Query options.
      * @returns {any} Current value at path.
      */
     get(...params) {
@@ -139,34 +137,42 @@ export default class ReactiveStore {
         }
 
         const reactive = (Tracker.active && options.reactive),
-            search = this._findProperty(path, reactive);
+            { depNode, value } = this._findProperty(path, reactive);
 
         if (reactive) {
-            ensureDep(search.depNode).depend();
+            // Ensure that dep exists and depend on it
+            if (!depNode.dep) {
+                depNode.dep = new Tracker.Dependency();
+            }
+
+            depNode.dep.depend();
         }
 
-        return search.value;
+        return value;
     }
 
     /**
      * @function equals - Check equality of root against comparison value (and register equality dependency if reactive)
      * 
-     * @param {any} value - Value to compare to.
-     * @param {queryOptions} [options] - Query options.
+     * @param {any} value - Comparison value.
+     * @param {QueryOptions} [options] - Query options.
      * @returns {boolean} Whether or not values are equal.
      *//**
      * @function equals - Check equality of value at path against comparison value (and register equality dependency if reactive)
      * 
      * @param {path} path - Path of store value.
-     * @param {any} value - Value to compare to.
-     * @param {queryOptions} [options] - Query options../run    
-     * @returns {boolean} Whether or not values are equal. 
+     * @param {any} value - Comparison value.
+     * @param {QueryOptions} [options] - Query options.
+     * @returns {boolean} Whether or not values are equal.
      */
     equals(...params) {
         // Interpret params based on length and contents
         let path, value, options;
 
-        if (params.length === 2) {
+        if (params.length < 2) {
+            // One-parameter config
+            ([value] = params);
+        } else if (params.length === 2) {
             // Two-parameter configs
             if (isObject(params[1])) {
                 ([value, options] = params);
@@ -175,12 +181,9 @@ export default class ReactiveStore {
             } else {
                 ([path, value] = params);
             }
-        } else if (params.length > 2) {
+        } else {
             // Three-parameter config
             ([path, value, options] = params);
-        } else {
-            // One-parameter config
-            ([value] = params);
         }
 
         // Throw error if value is not primitive
@@ -197,13 +200,32 @@ export default class ReactiveStore {
         }
 
         const reactive = (Tracker.active && options.reactive),
-            search = this._findProperty(path, reactive);
+            search = this._findProperty(path, reactive),
+            isEqual = (search.value === value);
 
         if (reactive) {
-            ensureEqDep(search.depNode, value, search.value).depend();
+            // Ensure that equality dep exists for the given value and depend on it
+            const { depNode } = search;
+
+            if (!depNode.eqDepMap) {
+                depNode.eqDepMap = new Map();
+            }
+        
+            let eqDep = depNode.eqDepMap.get(value);
+        
+            if (!eqDep) {
+                eqDep = new Tracker.Dependency();
+                depNode.eqDepMap.set(value, eqDep);
+            }
+        
+            if (isEqual) {
+                depNode.activeEqDep = eqDep;
+            }
+
+            eqDep.depend();
         }
 
-        return (search.value === value);
+        return isEqual;
     }
 
     /**
@@ -220,26 +242,23 @@ export default class ReactiveStore {
     }
 
     /**
-     * Assign given value(s) to the given path(s).
-     * @param {path|Object.<path, any>} pathOrMap - Single path or path -> value map.
-     * @param {any} [value] - Value to assign (only used when pathOrMap is a single path).
+     * @function assign - Assign the given value at the given path.
+     * 
+     * @param {path} path - Path to assign value to.
+     * @param {any} value - Value to assign.
+     *//**
+     * @function assign - Assign each value from the given path -> value map at its corresponding path.
+     * 
+     * @param {Object.<path, any>} pathValueMap - Object map of path -> value pairs to be assigned.
      */
-    assign(pathOrMap, value) {
-        // Coerce root data to be an Object if it is not currenty traversable
-        if (!this._isTraversable) {
-            this._isTraversable = true;
-            this.data = {};
-        }
+    assign(...params) {
+        const pathValueMap = (params.length >= 2)
+            ? { [params[0]]: params[1] }
+            : params[0];
 
         this._watchChanges(() => {
-            if (isObject(pathOrMap)) {
-                // pathOrMap is path -> value map        
-                for (const path of Object.keys(pathOrMap)) {        
-                    this._setAtPath(path, pathOrMap[path]);
-                }
-            } else {
-                // Assume pathOrMap is path string and use second param as value
-                this._setAtPath(pathOrMap, value);
+            for (const path of Object.keys(pathValueMap)) {
+                this._setAtPath(path, pathValueMap[path]);
             }
         });
     }
@@ -298,8 +317,19 @@ export default class ReactiveStore {
             value = this._mutators[path](value, this);
         }
 
-        const unset = (value === ReactiveStore.DELETE), // Unset if value is ReactiveStore.DELETE
-            pathTokens = this._getPathTokens(path),
+        // Unset if value is ReactiveStore.DELETE
+        const unset = (value === ReactiveStore.DELETE);
+
+        // Coerce root data to be an Object if it is not currenty traversable
+        if (!this._isTraversable) {
+            // Cancel the operation if this is an unset because the path doesn't exist
+            if (unset) return;
+
+            this._isTraversable = true;
+            this.data = {};
+        }
+
+        const pathTokens = this._getPathTokens(path),
             lastTokenIdx = (pathTokens.length - 1),
             parentDepNodes = [this._rootNode];
 
@@ -390,6 +420,7 @@ export default class ReactiveStore {
 
     /**
      * If given dep is defined, add it to the change data set to be processed after ops have completed.
+     * Also process any equality dependency changes that might have happened.
      * @param {DepNode} depNode - Dependency Node to register.
      * @param {any} newValue - New value at corresponding path in the store
      */
@@ -411,7 +442,7 @@ export default class ReactiveStore {
 
                     depNode.activeEqDep = eqDep;
                 }
-            }            
+            }
         }
     }
     
@@ -505,7 +536,7 @@ export default class ReactiveStore {
                 
             } else {
                 // Run custom equality check for the oldValue's instance type (e.g. Set, Date, etc) if there is one
-                const isEqual = ReactiveStore.customEqChecks.get(oldValue.constructor);
+                const isEqual = ReactiveStore.eqCheckMap.get(oldValue.constructor);
 
                 if (!isEqual || !isEqual(oldValue, newValue)) {
                     changed = true;
@@ -534,7 +565,6 @@ export default class ReactiveStore {
      * @param {path} path - Dot-notated path string to get tokens for.
      */
     _getPathTokens(path) {
-        // Cache split path tokens for faster access on reruns
         path = String(path);
 
         if (!this._pathTokensCache[path]) {
@@ -548,7 +578,7 @@ export default class ReactiveStore {
      * Attempt to traverse down current data on the given path creating dep nodes along the way (if reactive)
      * @param {path} path - Path to find
      * @param {boolean} [reactive] - Will be assumed to be a reactive find if true.
-     * @returns {Object} An Object with the containing the value and related dep node
+     * @returns {Object} An Object containing search value and related dep node
      */
     _findProperty(path, reactive) {
         let depNode = this._rootNode,
@@ -579,6 +609,6 @@ export default class ReactiveStore {
             }
         }
     
-        return { value, depNode };
+        return { depNode, value };
     }
 }
