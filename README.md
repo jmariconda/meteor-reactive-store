@@ -1,6 +1,26 @@
 # Reactive Store
 
-Reactive Store is a reactive data type for Meteor that supports deep dependency tracking.
+Reactive Store is a reactive data type for Meteor's Tracker interface that supports deep dependency tracking.
+
+## Reasoning:
+This package was created with the goal of offering a similar interface to ReactiveDict, but without the complications of being based around EJSON.
+
+ReactiveDict works well, but has some drawbacks:
+- Storable data is limited to EJSON types. Any other instantiated value will need to have its prototype modified to be EJSON-compatible or a new EJSON-compatible extended class will need to be created in order to store it.
+- Internal data is serialized/deserialized for every access/modification. This ensures reference safety so that internal data is not unexpectedly changed from the outside, but sacrifices performance in doing so.
+- Does not allow tracking deep dependencies past the first level of keys.
+- Does not allow linking logic to the keys so that state can be managed/mutated on change.
+
+ReactiveStore aims to solve these in the following ways:
+- __Important:__ Internal data is not serialized. This allows for faster accesses/modifications and storage of any value with the following caveats:
+    - The user must be aware that any changes made to the data outside of the store's interface will not be tracked.
+    - Any instantiated value that is gotten, modified, and assigned in the store will be assumed to have changed since identical instance references cannot be diffed, as they literally point to the same instance.
+- Values can be queried at the root or any depth within the store via dot-notated paths.
+    - This means that reactivity can be scoped to exactly the data that you need.
+- Provides interface to link logic directly to any path within the store via mutator functions. This allows ReactiveStore to work very well as template state by doing the following:
+    - Add a state pointer attribute (e.g. data-state-path="path.to.field") to any DOM inputs that should modify state
+    - Add a single event handler that catches changes to any [data-state-path] elements and directly calls assign() with the element's state path and value
+    - Define mutator functions for all state paths that will be assigned this way to handle processing raw input values or doing side effects on the store
 
 ## Installation:
 Add the package:
@@ -10,55 +30,88 @@ Then in any file:
 > import ReactiveStore from 'meteor/jmaric:deep-reactive-store';
 
 ## Usage:
-- ### (_constructor_) ReactiveStore([initialValue: _Any_[, pathMutatorMap: _Object_]])
+- ### (_constructor_) ReactiveStore([initialValue: _Any_[, pathMutatorMap: _Object<path, function>_]])
     - Initializes the ReactiveStore with any initial value.
     - If provided, pathMutatorMap should map dot-notated paths to functions with parameters (value[, store]) that will mutate and return assigned/deleted values (see assign/delete function notes below).
-- ### get([pathOrOptions: _String/Object_[, options: _Object_]])
-    - If the first parameter is an Object, it will be interpreted as options and the second parameter will be ignored; otherwise, the first parameter will be interpreted as the path.
-    - Provide a dot-notated path string to the property you would like to reactively access
-    - The dependency will only trigger if the value at the given path changes.
-    - This is a totally safe function, so even if the path doesn't exist yet, it will still return undefined and re-run if/when the path does exist and the value has changed.
-    - If no path is provided, the root value will be returned and tracked (because of this, ReactiveStore can essentially stand in as a direct replacement for ReactiveVar).
-    - Options:
-        - reactive (_Boolean_): If this is set to a falsy value, the query will not be tracked.
-    - Notes:
-        - Options can also be parsed from a Spacebars.kw hash passed from Blaze (e.g. {{store.get 'field' reactive=false}} or {{store.get reactive=false}} if you make the store accessible in your template).
-- ### set(value: _Any_)
-    - Calling this will override the root value with whatever value is provided.
-    - When this happens, ReactiveStore will take into account the previous type of the root value and search for deep dependency changes accordingly.
-- ### assign(pathValMapOrPath: _Object/String_[, value: _Any_])
-    - First parameter can either be an Object of dot-notated paths mapped to values or a single path. The second value param must be provided if it is the latter.
-    - This function will go through the path(s) given, set the assigned value(s), and trigger any dependencies that have been affected (at, above, or below the set path).
-    - Notes:
-        - If a mutator function is available for a set path, the respective value will be run through that before processing.
-        - If the root value is not currently an Object or Array, it will be coerced into an Object.
-        - Because Object keys have no guaranteed iteration order, there is no guaranteed order that the paths will be set if an Object of paths mapped to values is provided.
-- ### delete(...paths: _String_)
-    - Delete all of the given deep paths and trigger dependencies accordingly.
-    - Notes:
+
+- ### Accessors:
+
+    - #### get([options: _Object/Spacebars.kw_])    
+      #### get(path: _String_[, options: _Object/Spacebars.kw_]])
+        - If no path is provided, reactively returns the current root value (similar to ReactiveVar get functionality).
+        - If a path is provided, reactively returns the current value at that path.
+        - Path should be provided in dot-notation (e.g. 'some.deep.property')
+        - The dependency will only re-run if the queried value changes.
+        - This is a totally safe function, so even if the path doesn't exist yet, it will return undefined and re-run if/when the path does exist and the value has changed.
+        - Options:
+            - reactive (_Boolean_): If this is set to a falsy value, the query will not be reactively tracked.
+        - Notes:
+            - Options can also be parsed from a Spacebars.kw hash passed from Blaze (e.g. {{store.get 'field' reactive=false}} or {{store.get reactive=false}} if you make the store accessible in your template).
+    
+    - #### equals(value: _Any_[, options: _Object_])
+      #### equals(path: _String_, value: _Any_[, options: _Object_])
+        - If no path is provided, reactively returns the equivalency of the root value to the given value.
+        - If a path is provided, reactively returns the equivalency of the value at that path to the given value.
+        - __Important:__ Only primitive values can be checked for equivalency (i.e. string, number, boolean, null, undefined, Symbol)
+        - The benefit of using this over _get_ is that it will only trigger a re-run when the equivalency status changes (e.g. store.equals(1) will only fire when the root value is something else and becomes 1, or is 1 and becomes something else)
+        - Options:
+            - reactive (_Boolean_): If this is set to a falsy value, the query will not be reactively tracked.
+        - Notes:
+            - Options can also be parsed from a Spacebars.kw hash passed from Blaze (e.g. {{store.equals 'field' 'value' reactive=false}} or {{store.equals 'value' reactive=false}} if you make the store accessible in your template).
+
+- ### Modifiers:
+
+    - #### set(value: _Any_)
+        - Calling this will override the root value with whatever value is provided.
+        - When this happens, ReactiveStore will take into account the previous type of the root value and search for deep dependency changes accordingly.
+    
+    - #### assign(path: _String_, value: _Any_])
+      #### assign(pathValMap: _Object<path, value>_)
+        - To assign a single path, provide a dot-notated path string and a value to assign.
+        - To assign multiple paths, provide a single Object of paths mapped to values to assign.
+        - This function will go through the path(s) given, set the assigned value(s), and trigger any dependencies that have been affected (at, above, or below the set path).
+        - You can assign ReactiveStore.DELETE to a path to delete it from the store. This is the same as calling the delete() method on that path, but allows you to batch the operation in with other assignments in a single call.
+        - If a mutator function is available for a set path, the assigned value will be run through that before processing.
+        - Notes:
+            - Unless ReactiveStore.DELETE is assigned, any depth that does not yet exist in the store will be coerced into an Object as needed based on the assigned paths (e.g. if store value is undefined and you call store.assign('deep.path', 1) the new value will be { deep: { path: 1 } }).
+            - Because Object keys have no guaranteed iteration order, there is no guaranteed order that the paths will be set if an Object of paths mapped to values is provided.
+    
+    - #### delete(...paths: _String_)
+        - Delete all of the given paths from the store.
         - This does not do anything unless the root value is an Object or Array.
         - If there is a mutator function available for a given path, it will be run with a set value of ReactiveStore.DELETE. This is primarily so that secondary actions
-        can be run on the store on delete, but this could technically be used to cancel a delete operation if something other than ReactiveStore.DELETE is returned from the mutator.
-- ### clear()
-    - Reset the root value based on its current type.
-    - If it is an Object or Array, it will be reset to {} or [] respectively.
-    - Otherwise it will be set to undefined.
-- ### updateMutators(newPathMutatorMap: _Object_) 
-    - Update current mutators with the paths in the given path-mutator map.
-    - Map should be formatted as described above in the constructor documentation.
-- ### removeMutators(...paths: _String_)
-    - Remove any mutators associated with the given paths.
-- ### (_static_) ReactiveStore.addEqualityCheck(constructor: _Function/Class_, eqCheck: _Function_)
-    - Add an equality checking function that will be used for instances of the given constructor.
-    - The eqCheck function should take two parameters (oldValue, newValue) and return a truthy/falsy value that will used to determine if they are equal.
-    - By default, there are already equality checks for Set and Date instances, but these can be overridden if you need to for some reason.
-    - The first caveat stated below still applies for this.
-- ### (_static_) ReactiveStore.removeEqualityCheck(constructor: _Function/Class_)
-    - Remove an existing equality checking function
-- ### (_static_) ReactiveStore.DELETE: _Symbol_
-    - Symbol that can be assigned to paths to delete them from the store.
-    - Useful for mutator functions when you want to conditionally unset the path, or if you want to set and delete paths all in the same call to the assign function.
-    - Note: This symbol is the value that is 'set' internally whenever the delete method is called for a given path.
+    can be run on the store on delete, but this could technically be used to cancel a delete operation if something other than ReactiveStore.DELETE is returned from the mutator.
+    
+    - #### clear()
+        - Reset the root value based on its current type.
+        - If it is an Object or Array, it will be reset to {} or [] respectively.
+        - Otherwise, it will be set to undefined.
+
+- ### Utility:
+
+    - #### updateMutators(newPathMutatorMap: _Object_) 
+        - Update current mutators with the paths in the given path-mutator map.
+        - Map should be formatted as described above in the constructor documentation.
+
+    - #### noMutation(callback: _Function_)
+        - Mutations will be skipped for any assign/delete calls within the given callback.
+        - Particularly useful inside of mutator functions if you just want to assign values to other fields in the store without running any mutators they might have.
+
+    - #### removeMutators(...paths: _String_)
+        - Remove any mutators associated with the given paths.
+
+    - #### (_static_) ReactiveStore.addEqualityCheck(constructor: _Function/Class_, isEqual: _Function_)
+        - Add a function that will be used for checking equality between _different_ instances of the given constructor.
+        - The isEqual function should take two parameters (oldValue, newValue) and return a truthy/falsy value that will used to determine if they are equal.
+        - By default, there are already equality checks for Set and Date instances, but these can be overridden if you need to for some reason.
+
+    - #### (_static_) ReactiveStore.removeEqualityCheck(constructor: _Function/Class_)
+        - Remove an existing equality checking function.
+    
+    - #### (_static_) ReactiveStore.DELETE: _Symbol_
+        - Symbol that can be assigned to paths to delete them from the store.
+        - Useful for mutator functions when you want to conditionally unset the path, or if you want to set and delete paths all in the same call to the assign function.
+        - Note: This symbol is the value that is 'set' internally whenever the delete method is called for a given path.
 
 ## A Few Examples:
 ```javascript
@@ -68,9 +121,9 @@ const store = new ReactiveStore({
     // Initial data
 }, {
     // Path mutator
-    'some.deep.value': function (value, store) {
+    'some.deep.path': function (value, store) {
         /*
-         * This will run whenever 'some.deep.value' is assigned or deleted to/from the store and use the returned value for the respective operation.
+         * This will run whenever 'some.deep.path' is directly assigned or deleted to/from the store and use the returned value for the respective operation.
          * From inside of here you can also use the store parameter to perform secondary actions such as running assign/delete on other fields.
          */
         
@@ -84,35 +137,47 @@ store.get()
 
 // Reactively get some deep value from the store
 // This will rerun when inside of an active Tracker context and the value at the given path changes (directly or indirectly)
-store.get('some.deep.value')
+store.get('some.deep.path')
 
 // Safe non-reactive get (if you do not know the field exists)
 store.get({ reactive: false })
-store.get('some.deep.value', { reactive: false })
+store.get('some.deep.path', { reactive: false })
 
 // Manual non-reactive get (if you know the field exists)
 store.data
-store.data.some.deep.value
+store.data.some.deep.path
+
+// Reactively check equality of root value of the store against any primitive value.
+// This will rerun when inside of an active Tracker context and the equality status changes
+store.equals('some value')
+
+// Reactively check equality of a deep value in the store against any primitive value.
+// This will rerun when inside of an active Tracker context and the equality status changes
+store.equals('some.deep.path', 'some value')
+
+// Non-reactive equality checks
+store.equals('some value', { reactive: false })
+store.equals('some.deep.path', 'some value', { reactive: false })
 
 // Single path assignment
-store.assign('some.deep.value', 'some value')
+store.assign('some.deep.path', 'some value')
 
 // Multi-path assignment/deletion
 store.assign({
     'topField': true,
-    'some.deep.value': {},
+    'some.deep.path': {},
     'delete.path': ReactiveStore.DELETE
 })
 
 // Path deletion
-store.delete('topField', 'some.deep.value')
+store.delete('topField', 'some.deep.path')
 
 // Set store root value
 store.set([1, 2, 3])
 store.set({ key: true })
 
-// NOTE: Reactive 'get' calls with paths will be ignored while the root value is not traversable (Object/Array)
-// The store is effectively the same as ReactiveVar in this case but with instance-based equality checking (if set)
+// NOTE: Reactive deep get/equals calls with paths will be ignored while the root value is not traversable (Object/Array)
+// The store is effectively the same as ReactiveVar in this case but with type-based equality checking for intantiated values (if an equality check has been added).
 store.set(new Date()) 
 store.set(true)
 
@@ -123,11 +188,19 @@ store.clear()
 store.updateMutators({
     'another.deep.field': function (value, store) {
         // ...
-    }
+    },
+    // ...
+})
+
+// Skip mutations
+store.noMutation(() => {
+    // No mutators will run while inside this callback
+    store.assign('another.deep.field', 1);
+    store.delete('some.deep.path');
 })
 
 // Remove mutator(s)
-store.removeMutators('another.deep.field', 'some.deep.value')
+store.removeMutators('another.deep.field', 'some.deep.path')
 
 // Add custom equality check
 ReactiveStore.addEqualityCheck(Date, function (oldDate, newDate) {
@@ -139,7 +212,3 @@ ReactiveStore.addEqualityCheck(Date, function (oldDate, newDate) {
 ReactiveStore.removeEqualityCheck(Date)
 
 ```
-
-## Caveats:
-- Deep dependencies cannot be checked if a referenced value is gotten from the store, modified in place, and then set. In this case, the value will be assumed as changed and all related dependencies will be triggered to be safe. This is because, similarly to ReactiveVar, ReactiveStore does not serialize/clone the data stored in it. This has the benefit of being able to store anything inside of it (unlike ReactiveDict which only supports EJSON types), but you also need to be aware that references will be kept when modifying data. Ideally, you should set deep properties directly or set a new instance, rather than getting, modifying, and setting the existing reference.
-- For efficiency reasons, ReactiveStore will only check for deep Object/Array changes as far as it needs to. This means that once a change has been found, if there are no deeper dependencies to check, the deep traversal will stop and any relevant dependency changes will be triggered. If you have many deep dependencies registered and only one or two need to be changed, you may want to use the assign() function to directly target and change them in order to avoid unnecessary traversal.
