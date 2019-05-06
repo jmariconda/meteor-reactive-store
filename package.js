@@ -1,5 +1,5 @@
 Package.describe({
-    summary: 'Reactive Store is a reactive data storage for Meteor\'s Tracker interface that supports deep dependency tracking.',
+    summary: 'A reactive data storage for Meteor\'s Tracker interface that supports deep dependency tracking.',
     version: '2.0.0',
     name: 'jmaric:deep-reactive-store',
     documentation: 'README.md',

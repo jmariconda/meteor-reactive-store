@@ -525,6 +525,7 @@ export default class ReactiveStore {
         let depNode = this._rootNode,
             value = this.data;
 
+        // Ignore path if it is undefined or null
         if (path != null) {
             const reactive = Tracker.active,
                 pathTokens = this._getPathTokens(path),
