@@ -1,5 +1,4 @@
 import { Tracker } from 'meteor/tracker';
-import { Spacebars } from 'meteor/spacebars';
 import { isObject, isTraversable, ensureDepNode } from './helpers';
  
 /**
@@ -16,10 +15,6 @@ import { isObject, isTraversable, ensureDepNode } from './helpers';
  * @param {any} value - Assigned value
  * @param {ReactiveStore} store - Current ReactiveStore instance
  * @returns {any} Mutated value
- * 
- * @typedef QueryOptions - Options for get/equals queries.
- * @type {Object|Spacebars.kw}
- * @property {boolean} [reactive=true] - If true, a dependency will be registered and tracked for the targeted path.
  */
 
 /**
@@ -88,55 +83,15 @@ export default class ReactiveStore {
     }
 
     /**
-     * @function get - Get value at root (and register dependency if reactive)
+     * Get value at path (and register dependency if reactive)
      * 
-     * @param {QueryOptions} [options] - Query options.
-     * @returns {any} Current value at root.
-     *//**
-     * @function get - Get value at path (and register dependency if reactive)
-     * 
-     * @param {path} path - Path of store value.
-     * @param {QueryOptions} [options] - Query options.
-     * @returns {any} Current value at path.
+     * @param {path} [path] - Path of store value.
+     * @returns {any} Current value at path or root value if path is not given.
      */
-    get(...params) {
-        // Interpret params based on length and contents
-        let path, options;
+    get(path) {
+        const { depNode, value } = this._findProperty(path);
 
-        if (params.length > 1) {
-            // Two-parameter configs
-            if (isObject(params[1])) {
-                ([path, options] = params);
-            } else if (params[1] instanceof Spacebars.kw) {
-                ([path, { hash: options }] = params);
-            } else {
-                ([path] = params);
-            }
-        } else {
-            // One-parameter configs
-            const [param] = params;
-
-            if (isObject(param)) {
-                options = param;
-            } else if (param instanceof Spacebars.kw) {
-                options = param.hash;
-            } else {
-                path = param;
-            }
-        }
-
-        // Init options object if it hasn't been already
-        if (!options) options = {};
-
-        // Set default option values if they are not set
-        if (!options.hasOwnProperty('reactive')) {
-            options.reactive = true;
-        }
-
-        const reactive = (Tracker.active && options.reactive),
-            { depNode, value } = this._findProperty(path, reactive);
-
-        if (reactive) {
+        if (Tracker.active) {
             // Ensure that dep exists and depend on it
             if (!depNode.dep) {
                 depNode.dep = new Tracker.Dependency();
@@ -152,35 +107,24 @@ export default class ReactiveStore {
      * @function equals - Check equality of root against comparison value (and register equality dependency if reactive)
      * 
      * @param {any} value - Comparison value.
-     * @param {QueryOptions} [options] - Query options.
-     * @returns {boolean} Whether or not values are equal.
+     * @returns {boolean} Equality of the values.
      *//**
      * @function equals - Check equality of value at path against comparison value (and register equality dependency if reactive)
      * 
      * @param {path} path - Path of store value.
      * @param {any} value - Comparison value.
-     * @param {QueryOptions} [options] - Query options.
-     * @returns {boolean} Whether or not values are equal.
+     * @returns {boolean} Equality of the values.
      */
     equals(...params) {
-        // Interpret params based on length and contents
-        let path, value, options;
+        // Interpret params based on length
+        let path, value;
 
         if (params.length < 2) {
             // One-parameter config
             ([value] = params);
-        } else if (params.length === 2) {
-            // Two-parameter configs
-            if (isObject(params[1])) {
-                ([value, options] = params);
-            } else if (params[1] instanceof Spacebars.kw) {
-                ([value, { hash: options }] = params);
-            } else {
-                ([path, value] = params);
-            }
         } else {
-            // Three-parameter config
-            ([path, value, options] = params);
+            // Two-parameter config
+            ([path, value] = params);
         }
 
         // Throw error if value is not primitive
@@ -188,19 +132,10 @@ export default class ReactiveStore {
             throw new Error('ReactiveStore: Only primitive values can be registered as equality dependencies (number, string, boolean, undefined, null, Symbol).');
         }
 
-        // Init options object if it hasn't been already
-        if (!options) options = {};
-
-        // Set default option values if they are not set
-        if (!options.hasOwnProperty('reactive')) {
-            options.reactive = true;
-        }
-
-        const reactive = (Tracker.active && options.reactive),
-            search = this._findProperty(path, reactive),
+        const search = this._findProperty(path),
             isEqual = (search.value === value);
 
-        if (reactive) {
+        if (Tracker.active) {
             // Ensure that equality dep exists for the given value and depend on it
             const { depNode } = search;
 
@@ -409,19 +344,19 @@ export default class ReactiveStore {
      * @param {Function} op - Operation to run.
      */
     _watchChanges(op) {
-        this._changeData.opCount++;
+        const { _changeData } = this;
 
+        _changeData.opCount++;
         op();
-
-        this._changeData.opCount--;
+        _changeData.opCount--;
 
         // Once there are no more ops running, trigger all changed deps and clear the set
-        if (!this._changeData.opCount && this._changeData.deps.size) {
-            for (const dep of this._changeData.deps) {
+        if (!_changeData.opCount && _changeData.deps.size) {
+            for (const dep of _changeData.deps) {
                 dep.changed();
             }
 
-            this._changeData.deps = new Set();
+            _changeData.deps = new Set();
         }
     }
 
@@ -584,15 +519,15 @@ export default class ReactiveStore {
     /**
      * Attempt to traverse down current data on the given path creating dep nodes along the way (if reactive)
      * @param {path} path - Path to find
-     * @param {boolean} [reactive] - Will be assumed to be a reactive find if true.
      * @returns {Object} An Object containing search value and related dep node
      */
-    _findProperty(path, reactive) {
+    _findProperty(path) {
         let depNode = this._rootNode,
             value = this.data;
 
         if (path != null) {
-            const pathTokens = this._getPathTokens(path),
+            const reactive = Tracker.active,
+                pathTokens = this._getPathTokens(path),
                 numTokens = pathTokens.length;
             
             let pathExists = true;

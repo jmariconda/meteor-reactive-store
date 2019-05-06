@@ -1,6 +1,6 @@
 # Reactive Store
 
-Reactive Store is a reactive data type for Meteor's Tracker interface that supports deep dependency tracking.
+Reactive Store is a reactive data storage for Meteor's Tracker interface that supports deep dependency tracking.
 
 ## Reasoning:
 This package was created with the goal of offering a similar interface to ReactiveDict, but without the complications of being based around EJSON.
@@ -36,28 +36,20 @@ Then in any file:
 
 - ### Accessors:
 
-    - #### get([options: _Object/Spacebars.kw_])    
-      #### get(path: _String_[, options: _Object/Spacebars.kw_]])
+    - #### get([path: _String_])
         - If no path is provided, reactively returns the current root value (similar to ReactiveVar get functionality).
         - If a path is provided, reactively returns the current value at that path.
         - Path should be provided in dot-notation (e.g. 'some.deep.property')
         - The dependency will only re-run if the queried value changes.
         - This is a totally safe function, so even if the path doesn't exist yet, it will return undefined and re-run if/when the path does exist and the value has changed.
-        - Options:
-            - reactive (_Boolean_): If this is set to a falsy value, the query will not be reactively tracked.
-        - Notes:
-            - Options can also be parsed from a Spacebars.kw hash passed from Blaze (e.g. {{store.get 'field' reactive=false}} or {{store.get reactive=false}} if you make the store accessible in your template).
+        - __Important__: As of version 2, the 'reactive' option has been removed for get() because its functionality is covered by wrapping in a Tracker.nonreactive block, and supporting it complicated parameter processing unnecessarily.
     
-    - #### equals(value: _Any_[, options: _Object_])
-      #### equals(path: _String_, value: _Any_[, options: _Object_])
+    - #### equals(value: _Any_)
+      #### equals(path: _String_, value: _Any_)
         - If no path is provided, reactively returns the equivalency of the root value to the given value.
         - If a path is provided, reactively returns the equivalency of the value at that path to the given value.
         - __Important:__ Only primitive values can be checked for equivalency (i.e. string, number, boolean, null, undefined, Symbol)
         - The benefit of using this over _get_ is that it will only trigger a re-run when the equivalency status changes (e.g. store.equals(1) will only fire when the root value is something else and becomes 1, or is 1 and becomes something else)
-        - Options:
-            - reactive (_Boolean_): If this is set to a falsy value, the query will not be reactively tracked.
-        - Notes:
-            - Options can also be parsed from a Spacebars.kw hash passed from Blaze (e.g. {{store.equals 'field' 'value' reactive=false}} or {{store.equals 'value' reactive=false}} if you make the store accessible in your template).
 
 - ### Modifiers:
 
@@ -140,8 +132,8 @@ store.get()
 store.get('some.deep.path')
 
 // Safe non-reactive get (if you do not know the field exists)
-store.get({ reactive: false })
-store.get('some.deep.path', { reactive: false })
+Tracker.nonreactive(() => store.get())
+Tracker.nonreactive(() => store.get('some.deep.path'))
 
 // Manual non-reactive get (if you know the field exists)
 store.data
@@ -156,8 +148,8 @@ store.equals('some value')
 store.equals('some.deep.path', 'some value')
 
 // Non-reactive equality checks
-store.equals('some value', { reactive: false })
-store.equals('some.deep.path', 'some value', { reactive: false })
+Tracker.nonreactive(() => store.equals('some value'))
+Tracker.nonreactive(() => store.equals('some.deep.path', 'some value'))
 
 // Single path assignment
 store.assign('some.deep.path', 'some value')
