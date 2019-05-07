@@ -33,6 +33,7 @@ Then in any file:
 - ### (_constructor_) ReactiveStore([initialValue: _Any_[, pathMutatorMap: _Object<path, function>_]])
     - Initializes the ReactiveStore with any initial value.
     - If provided, pathMutatorMap should map dot-notated paths to functions with parameters (value[, store]) that will mutate and return assigned/deleted values (see assign/delete function notes below).
+    - Check utility section below for special values that can be returned from mutators.
 
 - ### Accessors:
 
@@ -99,11 +100,15 @@ Then in any file:
 
     - #### (_static_) ReactiveStore.removeEqualityCheck(constructor: _Function/Class_)
         - Remove an existing equality checking function.
+
+    - #### (_static_) ReactiveStore.CANCEL: _Symbol_
+        - Symbol that can be returned from mutators to cancel the assign/delete operation for the related path.
+        - Useful if you want to create a mutation path that is only used for side effects on the store.
     
     - #### (_static_) ReactiveStore.DELETE: _Symbol_
         - Symbol that can be assigned to paths to delete them from the store.
         - Useful for mutator functions when you want to conditionally unset the path, or if you want to set and delete paths all in the same call to the assign function.
-        - Note: This symbol is the value that is 'set' internally whenever the delete method is called for a given path.
+        - Note: This symbol is the value that is assigned internally whenever the delete method is called for a given path.
 
 ## A Few Examples:
 ```javascript

@@ -38,7 +38,10 @@ export default class ReactiveStore {
     }
 
     // Symbol that can be assigned to path to delete it from the store
-    static DELETE = Symbol('DELETE_PATH');
+    static DELETE = Symbol('DELETE_STORE_PATH');
+
+    // Symbol that can be returned from a mutator to cancel the assign/delete operation
+    static CANCEL = Symbol('CANCEL_STORE_ASSIGNMENT');
 
     // Map of constructors to equality check functions
     static eqCheckMap = new Map([
@@ -257,6 +260,11 @@ export default class ReactiveStore {
         // Mutate value if the _noMutate flag is not set and there is a mutator function for the path        
         if (!this._noMutate && this._mutators[path] instanceof Function) {
             value = this._mutators[path](value, this);
+        }
+
+        // Cancel operation if value is ReactiveStore.CANCEL
+        if (value === ReactiveStore.CANCEL) {
+            return;
         }
 
         // Unset if value is ReactiveStore.DELETE
