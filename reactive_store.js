@@ -455,8 +455,21 @@ export default class ReactiveStore {
                         changed = true;
                     }
 
-                    for (const key of newValueKeys) {
-                        keySet.add(key);
+                    // Only process newValueKeys if we don't already know of any changes, or there are subDeps to process
+                    if (!changed || subDeps) {
+                        // Add all newValueKeys to the keySet
+                        for (const key of newValueKeys) {
+                            if (!keySet.has(key)) {
+                                // Definitely changed if newValue key does not exist in oldValue and its value is not undefined
+                                // NOTE: The presence of a new key doesn't matter if it is set to undefined because that means the value hasn't changed.
+                                if (!changed && newValue[key] !== undefined) {
+                                    changed = true;
+                                    if (!subDeps) break;
+                                }
+
+                                keySet.add(key);
+                            }
+                        }
                     }
 
                     // Set newValueTraversed to true so that _triggerAllDeps check below is skipped
@@ -466,7 +479,7 @@ export default class ReactiveStore {
                     changed = true;
                 }
 
-                // If we already know that value has changed, only keep traversing if there are unchecked sub-dependencies
+                // Only initiate further traversal if we don't already know of any changes, or there are subDeps to process
                 if (!changed || subDeps) {
                     // Iterate through all unique keys between the old/new values and check for deep changes
                     for (const key of keySet) {

@@ -174,7 +174,7 @@ store.set([1, 2, 3])
 store.set({ key: true })
 
 // NOTE: Reactive deep get/equals calls with paths will be ignored while the root value is not traversable (Object/Array)
-// The store is effectively the same as ReactiveVar in this case but with type-based equality checking for intantiated values (if an equality check has been added).
+// The store is effectively the same as ReactiveVar in this case but with type-based equality checking for instantiated values (if an equality check has been added).
 store.set(new Date()) 
 store.set(true)
 

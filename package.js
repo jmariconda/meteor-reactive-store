@@ -1,6 +1,6 @@
 Package.describe({
     summary: 'A reactive data storage for Meteor\'s Tracker interface that supports deep dependency tracking.',
-    version: '2.0.1',
+    version: '2.0.2',
     name: 'jmaric:deep-reactive-store',
     documentation: 'README.md',
     git: 'https://github.com/jeffm24/meteor-reactive-store.git'
