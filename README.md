@@ -15,6 +15,7 @@ ReactiveStore aims to solve these in the following ways:
 - __Important:__ Internal data is not serialized. This allows for faster accesses/modifications and storage of any value with the following caveats:
     - The user must be aware that any changes made to the data outside of the store's interface will not be tracked.
     - Any instantiated value that is gotten, modified, and assigned in the store will be assumed to have changed since identical instance references cannot be diffed, as they literally point to the same instance.
+    - Cyclical json data can technically be stored, but the store will assume value has changed if a cyclical path is found while performing diffs.
 - Values can be queried at the root or any depth within the store via dot-notated paths.
     - This means that reactivity can be scoped to exactly the data that you need.
 - Provides interface to link logic directly to any path within the store via mutator functions. This allows ReactiveStore to work very well as template state by doing the following:

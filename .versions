@@ -7,8 +7,8 @@ ecmascript-runtime-client@0.8.0
 ecmascript-runtime-server@0.7.1
 fetch@0.1.1
 inter-process-messaging@0.1.0
-jmaric:deep-reactive-store@2.0.2
-local-test:jmaric:deep-reactive-store@2.0.2
+jmaric:deep-reactive-store@2.0.3
+local-test:jmaric:deep-reactive-store@2.0.3
 meteor@1.9.3
 meteortesting:browser-tests@0.1.2
 meteortesting:mocha@0.4.4

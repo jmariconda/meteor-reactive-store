@@ -402,20 +402,30 @@ export default class ReactiveStore {
      * @param {Object|Array} keyFilter - This will be traversed in tandem with deps and only shared keys at each level will be triggered.
      *      Traversal branches will also be stopped early if there are no more levels to traverse in keyFilter.
      * @param {any} curValue - Current value at the deps corresponding level in the store. Will be traversed in tandem if traversable.
+     * @param {Set} seenTraversableSet - Used to prevent infinite recursion if keyFilter is cyclical.
      */
-    _triggerAllDeps(deps, keyFilter, curValue) {
+    _triggerAllDeps(deps, keyFilter, curValue, seenTraversableSet) {
         if (deps && isTraversable(keyFilter)) {
-            const curValueIsTraversable = isTraversable(curValue);
+            if (!seenTraversableSet) {
+                seenTraversableSet = new Set();
+            }
 
-            for (const key of Object.keys(deps)) {
-                const curValueAtKey = (curValueIsTraversable && curValue.propertyIsEnumerable(key))
-                    ? curValue[key]
-                    : undefined;
+            // Stop traversal if keyFilter has already been seen
+            if (!seenTraversableSet.has(keyFilter)) {
+                seenTraversableSet.add(keyFilter);
 
-                this._registerChange(deps[key], curValueAtKey);
+                const curValueIsTraversable = isTraversable(curValue);
 
-                if (keyFilter.propertyIsEnumerable(key)) {
-                    this._triggerAllDeps(deps[key].subDeps, keyFilter[key], curValueAtKey);
+                for (const key of Object.keys(deps)) {
+                    const curValueAtKey = (curValueIsTraversable && curValue.propertyIsEnumerable(key))
+                        ? curValue[key]
+                        : undefined;
+    
+                    this._registerChange(deps[key], curValueAtKey);
+    
+                    if (keyFilter.propertyIsEnumerable(key)) {
+                        this._triggerAllDeps(deps[key].subDeps, keyFilter[key], curValueAtKey, seenTraversableSet);
+                    }
                 }
             }
         }
@@ -426,10 +436,11 @@ export default class ReactiveStore {
      * deep dependency changes if necessary.
      * @param {DepNode} depNode - DepNode for the current traversal level.
      * @param {any} oldValue - Old value at current traversal level.
-     * @param {any} newValue - New value at current traversal lebel.
+     * @param {any} newValue - New value at current traversal level.
+     * @param {Set} seenTraversableSet - Used to prevent infinite recursion if oldValue or newValue is cyclical.
      * @returns {boolean} True if value has changed.
      */
-    _triggerChangedDeps(depNode, oldValue, newValue) {
+    _triggerChangedDeps(depNode, oldValue, newValue, seenTraversableSet) {
         const subDeps = depNode && depNode.subDeps;
 
         let newValueTraversed = false,
@@ -443,57 +454,74 @@ export default class ReactiveStore {
 
             } else if (isTraversable(oldValue)) {
                 // If oldValue is traversable...
-                const newValueIsTraversable = isTraversable(newValue),
-                    keySet = new Set(Object.keys(oldValue));
+                if (!seenTraversableSet) {
+                    seenTraversableSet = new Set();
+                }
 
-                if (newValueIsTraversable) {
-                    // If newValue is also traversable, add its keys to the keySet
-                    const newValueKeys = Object.keys(newValue);
+                if (seenTraversableSet.has(oldValue) || seenTraversableSet.has(newValue)) {
+                    // Assume changed if oldValue or newValue has already been seen once because cyclical data structures cannot be checked for deep changes
+                    changed = true;
 
-                    // Definitely changed if values don't share the same constructor or have a different amount of keys
-                    if (oldValue.constructor !== newValue.constructor || keySet.size !== newValueKeys.length) {
+                } else {
+                    // Otherwise, add oldValue to the seenTraversableSet and continue
+                    seenTraversableSet.add(oldValue);
+
+                    const newValueIsTraversable = isTraversable(newValue),
+                        keySet = new Set(Object.keys(oldValue));                               
+
+                    if (newValueIsTraversable) {
+                        // If newValue is also traversable, add it to the seenTraversableSet
+                        seenTraversableSet.add(newValue);
+
+                        // Add its keys to the keySet
+                        const newValueKeys = Object.keys(newValue);
+
+                        // Definitely changed if values don't share the same constructor or have a different amount of keys
+                        if (oldValue.constructor !== newValue.constructor || keySet.size !== newValueKeys.length) {
+                            changed = true;
+                        }
+
+                        // Only process newValueKeys if we don't already know of any changes, or there are subDeps to process
+                        if (!changed || subDeps) {
+                            // Add all newValueKeys to the keySet
+                            for (const key of newValueKeys) {
+                                if (!keySet.has(key)) {
+                                    // Definitely changed if newValue key does not exist in oldValue and its value is not undefined
+                                    // NOTE: The presence of a new key doesn't matter if it is set to undefined because that means the value hasn't changed.
+                                    if (!changed && newValue[key] !== undefined) {
+                                        changed = true;
+                                        if (!subDeps) break;
+                                    }
+
+                                    keySet.add(key);
+                                }
+                            }
+                        }
+
+                        // Set newValueTraversed to true so that _triggerAllDeps check below is skipped
+                        newValueTraversed = true;
+                        
+                    } else {
+                        // Definitely changed if newValue is not traversable
                         changed = true;
                     }
 
-                    // Only process newValueKeys if we don't already know of any changes, or there are subDeps to process
+                    // Only initiate further traversal if we don't already know of any changes, or there are subDeps to process
                     if (!changed || subDeps) {
-                        // Add all newValueKeys to the keySet
-                        for (const key of newValueKeys) {
-                            if (!keySet.has(key)) {
-                                // Definitely changed if newValue key does not exist in oldValue and its value is not undefined
-                                // NOTE: The presence of a new key doesn't matter if it is set to undefined because that means the value hasn't changed.
-                                if (!changed && newValue[key] !== undefined) {
-                                    changed = true;
-                                    if (!subDeps) break;
-                                }
-
-                                keySet.add(key);
-                            }
-                        }
-                    }
-
-                    // Set newValueTraversed to true so that _triggerAllDeps check below is skipped
-                    newValueTraversed = true;
-                } else {
-                    // Definitely changed if newValue is not traversable
-                    changed = true;
-                }
-
-                // Only initiate further traversal if we don't already know of any changes, or there are subDeps to process
-                if (!changed || subDeps) {
-                    // Iterate through all unique keys between the old/new values and check for deep changes
-                    for (const key of keySet) {
-                        const subDepNode = subDeps && subDeps[key];
-                        
-                        // Only traverse if change has not been found or there is a sub-dependency to check
-                        if (!changed || subDepNode) {
-                            const newValueAtKey = newValueIsTraversable ? newValue[key] : undefined,
-                                subValueChanged = this._triggerChangedDeps(subDepNode, oldValue[key], newValueAtKey);
+                        // Iterate through all unique keys between the old/new values and check for deep changes
+                        for (const key of keySet) {
+                            const subDepNode = subDeps && subDeps[key];
                             
-                            if (!changed && subValueChanged) {
-                                changed = true;
-                            }
-                        }                        
+                            // Only traverse if change has not been found or there is a sub-dependency to check
+                            if (!changed || subDepNode) {
+                                const newValueAtKey = newValueIsTraversable ? newValue[key] : undefined,
+                                    subValueChanged = this._triggerChangedDeps(subDepNode, oldValue[key], newValueAtKey, seenTraversableSet);
+                                
+                                if (!changed && subValueChanged) {
+                                    changed = true;
+                                }
+                            }                        
+                        }
                     }
                 }
                 
