@@ -1,5 +1,5 @@
 import { Tracker } from 'meteor/tracker';
-import { isObject, isTraversable, ensureDepNode } from './helpers';
+import { isObject, ensureDepNode } from './helpers';
  
 /**
  * @typedef path - Dot-notated path string.
@@ -28,7 +28,7 @@ export default class ReactiveStore {
     constructor(data, mutators) {
         this._deps = {};
         this._rootNode = ensureDepNode(this._deps, 'root');
-        this._isTraversable = isTraversable(data);
+        this._isTraversable = ReactiveStore.isTraversable(data);
         this._mutators = isObject(mutators) ? mutators : {};
         this._noMutate = false;
         this._changeData = { deps: new Set(), opCount: 0 };
@@ -42,6 +42,9 @@ export default class ReactiveStore {
 
     // Symbol that can be returned from a mutator to cancel the assign/delete operation
     static CANCEL = Symbol('CANCEL_STORE_ASSIGNMENT');
+
+    // Symbol that marks a value that would normally be traversable as non-traversable
+    static SHALLOW = Symbol('SHALLOW_STORE_DATA');
 
     // Map of constructors to equality check functions
     static eqCheckMap = new Map([
@@ -83,6 +86,21 @@ export default class ReactiveStore {
         }
 
         ReactiveStore.eqCheckMap.delete(constructor);
+    }
+
+    // Returns true if the given value is traversable (is Object/Array and doesn't have ReactiveStore.SHALLOW as a key set to true)
+    static isTraversable(value) {
+        // NOTE: Being very specific about shallow check because Symbol polyfill seems to add all symbols to all objects by default set to undefined (so ReactiveStore.SHALLOW in value would always be true).
+        return (isObject(value) || Array.isArray(value)) && (value[ReactiveStore.SHALLOW] !== true);
+    }
+
+    // Wrapper for traversable values that marks them to not be traversed for changes/sub-deps
+    static shallow(value) {
+        if (ReactiveStore.isTraversable(value)) {
+            Object.defineProperty(value, ReactiveStore.SHALLOW, { value: true });
+        }
+
+        return value;
     }
 
     /**
@@ -142,11 +160,13 @@ export default class ReactiveStore {
             // Ensure that equality dep exists for the given value and depend on it
             const { depNode } = search;
 
-            if (!depNode.eqDepMap) {
+            let eqDep;
+
+            if (depNode.eqDepMap) {
+                eqDep = depNode.eqDepMap.get(value);
+            } else {
                 depNode.eqDepMap = new Map();
-            }
-        
-            let eqDep = depNode.eqDepMap.get(value);
+            }            
         
             if (!eqDep) {
                 eqDep = new Tracker.Dependency();
@@ -170,7 +190,7 @@ export default class ReactiveStore {
     set(value) {
         const oldValue = this.data;
         
-        this._isTraversable = isTraversable(value);
+        this._isTraversable = ReactiveStore.isTraversable(value);
         this.data = value;
 
         this._watchChanges(() => this._triggerChangedDeps(this._rootNode, oldValue, value));
@@ -291,7 +311,7 @@ export default class ReactiveStore {
             
             if (tokenIdx < lastTokenIdx) {
                 // Parent Token: Ensure that search[token] is traversable, step into it, and store active deps
-                if (!isTraversable(search[token])) {
+                if (!ReactiveStore.isTraversable(search[token])) {
                     // Cancel the operation if this is an unset because the path doesn't exist
                     if (unset) return;
 
@@ -405,7 +425,7 @@ export default class ReactiveStore {
      * @param {Set} seenTraversableSet - Used to prevent infinite recursion if keyFilter is cyclical.
      */
     _triggerAllDeps(deps, keyFilter, curValue, seenTraversableSet) {
-        if (deps && isTraversable(keyFilter)) {
+        if (deps && ReactiveStore.isTraversable(keyFilter)) {
             if (!seenTraversableSet) {
                 seenTraversableSet = new Set();
             }
@@ -414,7 +434,7 @@ export default class ReactiveStore {
             if (!seenTraversableSet.has(keyFilter)) {
                 seenTraversableSet.add(keyFilter);
 
-                const curValueIsTraversable = isTraversable(curValue);
+                const curValueIsTraversable = ReactiveStore.isTraversable(curValue);
 
                 for (const key of Object.keys(deps)) {
                     const curValueAtKey = (curValueIsTraversable && curValue.propertyIsEnumerable(key))
@@ -452,7 +472,7 @@ export default class ReactiveStore {
                 // Cannot check for differences if oldValue and newValue are literally the same reference, so assume changed.
                 changed = true;
 
-            } else if (isTraversable(oldValue)) {
+            } else if (ReactiveStore.isTraversable(oldValue)) {
                 // If oldValue is traversable...
                 if (!seenTraversableSet) {
                     seenTraversableSet = new Set();
@@ -466,7 +486,7 @@ export default class ReactiveStore {
                     // Otherwise, add oldValue to the seenTraversableSet and continue
                     seenTraversableSet.add(oldValue);
 
-                    const newValueIsTraversable = isTraversable(newValue),
+                    const newValueIsTraversable = ReactiveStore.isTraversable(newValue),
                         keySet = new Set(Object.keys(oldValue));                               
 
                     if (newValueIsTraversable) {
@@ -590,7 +610,7 @@ export default class ReactiveStore {
                 }
         
                 if (pathExists) {
-                    if (isTraversable(value) && value.propertyIsEnumerable(token)) {
+                    if (ReactiveStore.isTraversable(value) && value.propertyIsEnumerable(token)) {
                         value = value[token];
                     } else {
                         pathExists = false;

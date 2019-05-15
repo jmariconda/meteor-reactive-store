@@ -98,9 +98,20 @@ Then in any file:
         - Add a function that will be used for checking equality between _different_ instances of the given constructor.
         - The isEqual function should take two parameters (oldValue, newValue) and return a truthy/falsy value that will used to determine if they are equal.
         - By default, there are already equality checks for Set and Date instances, but these can be overridden if you need to for some reason.
+        - Equality checks are global for all instances of ReactiveStore, so they only need to be defined once.
 
     - #### (_static_) ReactiveStore.removeEqualityCheck(constructor: _Function/Class_)
         - Remove an existing equality checking function.
+
+    - #### (_static_) ReactiveStore.shallow(value: _Any_)
+        - If the given value is traversable (i.e. plain Object/Array), it will be tagged with the ReactiveStore.SHALLOW symbol to make it not traversable.
+        - Values marked in this way will never be traversed, which means that get() calls to sub-properties within them will be ignored and return undefined.
+        - Newly set/assigned shallow values will be assumed as changed unless there is a custom equality check function defined for their constructors (Object/Array).
+        - NOTE: Shallow values will be coerced to {} if a new property is set within them via the assign() method.
+        - This is useful in the following cases:
+            - You know that you will not be querying for deep values within the stored value.
+            - You already know that the value has changed or just don't want ReactiveStore to perform a deep-diff check when the value is set/assigned.
+            - You want to override the default deep-diff check with a custom equality check.
 
     - #### (_static_) ReactiveStore.CANCEL: _Symbol_
         - Symbol that can be returned from mutators to cancel the assign/delete operation for the related path.
@@ -199,6 +210,11 @@ store.noMutation(() => {
 
 // Remove mutator(s)
 store.removeMutators('another.deep.field', 'some.deep.path')
+
+// Set/assign shallow root values (this means that root will be coerced to {} if assign is called)
+store.set(ReactiveStore.shallow({ some: { property: true } }))
+store.set(ReactiveStore.shallow([1, 2, 3, 4]))
+store.assign({ 'some.deep': ReactiveStore.shallow({ field: 1 }) })
 
 // Add custom equality check
 ReactiveStore.addEqualityCheck(Date, function (oldDate, newDate) {
