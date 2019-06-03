@@ -29,9 +29,9 @@ export default class ReactiveStore {
         this._deps = {};
         this._rootNode = ensureDepNode(this._deps, 'root');
         this._isTraversable = ReactiveStore.isTraversable(data);
+        this._changeData = { deps: new Set(), opCount: 0 };
         this._mutators = isObject(mutators) ? mutators : {};
         this._noMutate = false;
-        this._changeData = { deps: new Set(), opCount: 0 };
         this._pathTokensCache = {};
         
         this.data = data;
@@ -239,6 +239,18 @@ export default class ReactiveStore {
      */
     clear() {
         this.set(this._isTraversable ? new this.data.constructor() : undefined);
+    }
+
+    /**
+     * Create a ReactiveVar-like object with dedicated get/set functions to access/modify the given path in the store.
+     * @param {path} path - Path to create get/set object for.
+     * @returns {Object} get/set object for the givenp path.
+     */
+    abstract(path) {
+        return {
+            get: () => this.get(path),
+            set: val => this.assign(path, val)
+        };
     }
 
     /**
@@ -596,24 +608,20 @@ export default class ReactiveStore {
 
         // Ignore path if it is undefined or null
         if (path != null) {
-            const reactive = Tracker.active,
-                pathTokens = this._getPathTokens(path),
-                numTokens = pathTokens.length;
-            
-            let pathExists = true;
+            const pathTokens = this._getPathTokens(path),
+                reactive = Tracker.active;
         
-            for (let i = 0; i < numTokens; i++) {
+            for (let i = 0, numTokens = pathTokens.length; i < numTokens; i++) {
                 const token = pathTokens[i];
         
                 if (reactive) {
                     depNode = ensureDepNode(depNode.subDeps, token);
                 }
         
-                if (pathExists) {
+                if (value !== undefined) {
                     if (ReactiveStore.isTraversable(value) && value.propertyIsEnumerable(token)) {
                         value = value[token];
                     } else {
-                        pathExists = false;
                         value = undefined;
                         if (!reactive) break;
                     }

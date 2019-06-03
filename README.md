@@ -83,6 +83,12 @@ Then in any file:
 
 - ### Utility:
 
+    - #### abstract(path: _String_)
+        - Creates a ReactiveVar-like object with dedicated get/set functions to access/modify the given path in the store.
+        - The get() function is equivalent to store.get(path).
+        - The set(val) function is equivalent to store.assign(path, val).
+        - Useful if you want to pass around access to a specific field in the store via a simpler interface without having to pass around the store itself.
+
     - #### updateMutators(newPathMutatorMap: _Object_) 
         - Update current mutators with the paths in the given path-mutator map.
         - Map should be formatted as described above in the constructor documentation.
@@ -192,6 +198,9 @@ store.set(true)
 
 // Clear the store (Object -> {}, Array -> [], <other> -> undefined)
 store.clear()
+
+// Create a getter/setter object for a specific path
+store.abstract('some.deep.path')
 
 // Add mutator(s)
 store.updateMutators({
