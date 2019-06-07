@@ -32,6 +32,7 @@ export default class ReactiveStore {
         this._changeData = { deps: new Set(), opCount: 0 };
         this._mutators = isObject(mutators) ? mutators : {};
         this._noMutate = false;
+        this._abstractPathCache = {};
         this._pathTokensCache = {};
         
         this.data = data;
@@ -90,7 +91,7 @@ export default class ReactiveStore {
 
     // Returns true if the given value is traversable (is Object/Array and doesn't have ReactiveStore.SHALLOW as a key set to true)
     static isTraversable(value) {
-        // NOTE: Being very specific about shallow check because Symbol polyfill seems to add all symbols to all objects by default set to undefined (so ReactiveStore.SHALLOW in value would always be true).
+        // NOTE: Being very specific about shallow check because Symbol polyfill seems to add all symbols to all objects by default set to undefined (so 'ReactiveStore.SHALLOW in value' would always be true).
         return (isObject(value) || Array.isArray(value)) && (value[ReactiveStore.SHALLOW] !== true);
     }
 
@@ -243,14 +244,21 @@ export default class ReactiveStore {
 
     /**
      * Create a ReactiveVar-like object with dedicated get/set functions to access/modify the given path in the store.
+     * Created object is cached so that repeated calls for the same path will return the same object.
      * @param {path} path - Path to create get/set object for.
-     * @returns {Object} get/set object for the givenp path.
+     * @returns {Object} get/set object for the given path.
      */
     abstract(path) {
-        return {
-            get: () => this.get(path),
-            set: val => this.assign(path, val)
-        };
+        path = String(path);
+
+        if (!this._abstractPathCache[path]) {
+            this._abstractPathCache[path] = {
+                get: () => this.get(path),
+                set: val => this.assign(path, val)
+            };
+        }
+
+        return this._abstractPathCache[path];
     }
 
     /**

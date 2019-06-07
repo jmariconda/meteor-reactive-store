@@ -1,6 +1,6 @@
 Package.describe({
     summary: 'A reactive data storage for Meteor\'s Tracker interface that supports deep dependency tracking.',
-    version: '2.1.1',
+    version: '2.1.1_1',
     name: 'jmaric:deep-reactive-store',
     documentation: 'README.md',
     git: 'https://github.com/jeffm24/meteor-reactive-store.git'
@@ -12,7 +12,6 @@ Package.onUse((api) => {
 });
 
 Package.onTest((api) => {
-    api.use(['meteortesting:mocha', 'tracker', 'es5-shim', 'ecmascript']);
-    api.use('jmaric:deep-reactive-store');
+    api.use(['meteortesting:mocha', 'tracker', 'es5-shim', 'ecmascript', 'jmaric:deep-reactive-store']);
     api.mainModule('reactive_store.tests.js');
 });

@@ -85,6 +85,7 @@ Then in any file:
 
     - #### abstract(path: _String_)
         - Creates a ReactiveVar-like object with dedicated get/set functions to access/modify the given path in the store.
+        - Created object is cached after the first call, so repeated calls for the same path will always return the same object.
         - The get() function is equivalent to store.get(path).
         - The set(val) function is equivalent to store.assign(path, val).
         - Useful if you want to pass around access to a specific field in the store via a simpler interface without having to pass around the store itself.
