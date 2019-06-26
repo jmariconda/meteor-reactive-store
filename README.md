@@ -4,6 +4,7 @@ Reactive Store is a reactive data storage for Meteor's Tracker interface that su
 
 ## Reasoning:
 This package was created with the goal of offering a similar interface to ReactiveDict, but without the complications of being based around EJSON.
+It also builds on the concept by adding features that allow it to work better as state with its own internal logic.
 
 ReactiveDict works well, but has some drawbacks:
 - Storable data is limited to EJSON types. Any other instantiated value will need to have its prototype modified to be EJSON-compatible or a new EJSON-compatible extended class will need to be created in order to store it.
@@ -67,7 +68,7 @@ Then in any file:
         - You can assign ReactiveStore.DELETE to a path to delete it from the store. This is the same as calling the delete() method on that path, but allows you to batch the operation in with other assignments in a single call.
         - If a mutator function is available for a set path, the assigned value will be run through that before processing.
         - Notes:
-            - Unless ReactiveStore.DELETE is assigned, any depth that does not yet exist in the store will be coerced into an Object as needed based on the assigned paths (e.g. if store value is undefined and you call store.assign('deep.path', 1) the new value will be { deep: { path: 1 } }).
+            - Unless ReactiveStore.DELETE or ReactiveStore.CANCEL is assigned, any depth that does not yet exist in the store will be coerced into an Object as needed based on the assigned paths (e.g. if store value is undefined and you call store.assign('deep.path', 1) the new value will be { deep: { path: 1 } }).
             - Because Object keys have no guaranteed iteration order, there is no guaranteed order that the paths will be set if an Object of paths mapped to values is provided.
     
     - #### delete(...paths: _String_)
@@ -84,11 +85,14 @@ Then in any file:
 - ### Utility:
 
     - #### abstract(path: _String_)
-        - Creates a ReactiveVar-like object with dedicated get/set functions to access/modify the given path in the store.
+        - Creates a ReactiveVar-like object with dedicated get/equals/set/delete functions to access/modify the given path in the store.
         - Created object is cached after the first call, so repeated calls for the same path will always return the same object.
-        - The get() function is equivalent to store.get(path).
-        - The set(val) function is equivalent to store.assign(path, val).
         - Useful if you want to pass around access to a specific field in the store via a simpler interface without having to pass around the store itself.
+        - The internal functions of the generated object map like so:
+            - get() -> store.get(path)
+            - equals(val) -> store.equals(path, val)
+            - set(val) -> store.assign(path, val)
+            - delete() -> store.delete(path)
 
     - #### updateMutators(newPathMutatorMap: _Object_) 
         - Update current mutators with the paths in the given path-mutator map.
@@ -104,7 +108,7 @@ Then in any file:
     - #### (_static_) ReactiveStore.addEqualityCheck(constructor: _Function/Class_, isEqual: _Function_)
         - Add a function that will be used for checking equality between _different_ instances of the given constructor.
         - The isEqual function should take two parameters (oldValue, newValue) and return a truthy/falsy value that will used to determine if they are equal.
-        - By default, there are already equality checks for Set and Date instances, but these can be overridden if you need to for some reason.
+        - By default, there are already equality checks for Set, Date, and RegExp instances, but these can be overridden if you need to for some reason.
         - Equality checks are global for all instances of ReactiveStore, so they only need to be defined once.
 
     - #### (_static_) ReactiveStore.removeEqualityCheck(constructor: _Function/Class_)
@@ -200,7 +204,7 @@ store.set(true)
 // Clear the store (Object -> {}, Array -> [], <other> -> undefined)
 store.clear()
 
-// Create a getter/setter object for a specific path
+// Create a access/mutate object for a specific path
 store.abstract('some.deep.path')
 
 // Add mutator(s)

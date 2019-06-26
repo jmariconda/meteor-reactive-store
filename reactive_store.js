@@ -1,5 +1,5 @@
 import { Tracker } from 'meteor/tracker';
-import { isObject, ensureDepNode } from './helpers';
+import { isObject, ensureDepNode, setsAreEqual } from './helpers';
  
 /**
  * @typedef path - Dot-notated path string.
@@ -50,23 +50,24 @@ export default class ReactiveStore {
     // Map of constructors to equality check functions
     static eqCheckMap = new Map([
         [
-            Set, function (oldSet, newSet) {
-                let equal = (newSet instanceof Set && newSet.size === oldSet.size);
-
-                if (equal) {
-                    for (const val of oldSet) {
-                        if (!newSet.has(val)) {
-                            equal = false;
-                            break;
-                        }
-                    }
-                }
-
-                return equal;
-            }
+            Set, setsAreEqual
         ], [
             Date, function (oldDate, newDate) {
-                return (newDate instanceof Date && oldDate.getTime() === newDate.getTime());
+                return (
+                    newDate instanceof Date
+                    && oldDate.getTime() === newDate.getTime()
+                );
+            }
+        ], [
+            RegExp, function (oldRegex, newRegex) {
+                return (
+                    newRegex instanceof RegExp
+                    && oldRegex.source === newRegex.source
+                    && setsAreEqual(
+                        new Set(oldRegex.flags),
+                        new Set(newRegex.flags)
+                    )
+                );
             }
         ]
     ]);
@@ -243,10 +244,10 @@ export default class ReactiveStore {
     }
 
     /**
-     * Create a ReactiveVar-like object with dedicated get/set functions to access/modify the given path in the store.
+     * Create a ReactiveVar-like object with dedicated get/equals/set/delete functions to access/modify the given path in the store.
      * Created object is cached so that repeated calls for the same path will return the same object.
-     * @param {path} path - Path to create get/set object for.
-     * @returns {Object} get/set object for the given path.
+     * @param {path} path - Path to create object for.
+     * @returns {Object} object for the given path.
      */
     abstract(path) {
         path = String(path);
@@ -254,7 +255,9 @@ export default class ReactiveStore {
         if (!this._abstractPathCache[path]) {
             this._abstractPathCache[path] = {
                 get: () => this.get(path),
-                set: val => this.assign(path, val)
+                equals: val => this.equals(path, val),
+                set: val => this.assign(path, val),
+                delete: () => this.delete(path)
             };
         }
 
