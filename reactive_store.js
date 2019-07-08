@@ -2,7 +2,7 @@ import { Tracker } from 'meteor/tracker';
 import { isObject, ensureDepNode, setsAreEqual } from './helpers';
  
 /**
- * @typedef path - Dot-notated path string.
+ * @typedef path - Dot-notated store path.
  * @type {string}
  * 
  * @typedef DepNode - Dependency node object.
@@ -23,20 +23,22 @@ import { isObject, ensureDepNode, setsAreEqual } from './helpers';
 export default class ReactiveStore {
     /**
      * @param {any} data - Initial root value.
-     * @param {Object.<path, Mutator>} mutators - path -> Mutator map
+     * @param {Object.<path, Mutator>} mutatorMap - path -> Mutator map
      */
-    constructor(data, mutators) {
-        this._deps = {};
-        this._rootNode = ensureDepNode(this._deps, 'root');
+    constructor(data, mutatorMap) {
         this._isTraversable = ReactiveStore.isTraversable(data);
         this._changeData = { deps: new Set(), opCount: 0 };
-        this._mutators = isObject(mutators) ? mutators : {};
+        this._pathData = new Map();
         this._noMutate = false;
-        this._abstractPathCache = {};
-        this._pathTokensCache = {};
+
+        this.updateMutators(mutatorMap);
         
+        ensureDepNode(this, ReactiveStore.ROOT);
         this.data = data;
     }
+
+    // Symbol that represents the 'path' to the root value
+    static ROOT = Symbol('ROOT_STORE_PATH');
 
     // Symbol that can be assigned to path to delete it from the store
     static DELETE = Symbol('DELETE_STORE_PATH');
@@ -109,9 +111,9 @@ export default class ReactiveStore {
      * Get value at path (and register dependency if reactive)
      * 
      * @param {path} [path] - Path of store value.
-     * @returns {any} Current value at path or root value if path is not given.
+     * @returns {any} Current value at path.
      */
-    get(path) {
+    get(path = ReactiveStore.ROOT) {
         const { depNode, value } = this._findProperty(path);
 
         if (Tracker.active) {
@@ -144,6 +146,7 @@ export default class ReactiveStore {
 
         if (params.length < 2) {
             // One-parameter config
+            path = ReactiveStore.ROOT;
             ([value] = params);
         } else {
             // Two-parameter config
@@ -152,14 +155,14 @@ export default class ReactiveStore {
 
         // Throw error if value is not primitive
         if (value instanceof Object) {
-            throw new Error('ReactiveStore: Only primitive values can be registered as equality dependencies (number, string, boolean, undefined, null, Symbol).');
+            throw new Error('ReactiveStore: Only primitive values can be registered as equality dependencies (number, string, boolean, undefined, null, symbol).');
         }
 
+        // Ensure that equality dep exists for the given value and depend on it
         const search = this._findProperty(path),
             isEqual = (search.value === value);
 
         if (Tracker.active) {
-            // Ensure that equality dep exists for the given value and depend on it
             const { depNode } = search;
 
             let eqDep;
@@ -169,12 +172,12 @@ export default class ReactiveStore {
             } else {
                 depNode.eqDepMap = new Map();
             }            
-        
+
             if (!eqDep) {
                 eqDep = new Tracker.Dependency();
                 depNode.eqDepMap.set(value, eqDep);
             }
-        
+
             if (isEqual) {
                 depNode.activeEqDep = eqDep;
             }
@@ -195,7 +198,7 @@ export default class ReactiveStore {
         this._isTraversable = ReactiveStore.isTraversable(value);
         this.data = value;
 
-        this._watchChanges(() => this._triggerChangedDeps(this._rootNode, oldValue, value));
+        this._watchChanges(() => this._triggerChangedDeps(this[ReactiveStore.ROOT], oldValue, value));
     }
 
     /**
@@ -213,11 +216,13 @@ export default class ReactiveStore {
             ? { [params[0]]: params[1] }
             : params[0];
 
-        this._watchChanges(() => {
-            for (const path of Object.keys(pathValueMap)) {
-                this._setAtPath(path, pathValueMap[path]);
-            }
-        });
+        if (isObject(pathValueMap)) {
+            this._watchChanges(() => {
+                for (const [path, value] of Object.entries(pathValueMap)) {
+                    this._setAtPath(path, value);
+                }
+            });
+        }
     }
     
     /**
@@ -250,10 +255,11 @@ export default class ReactiveStore {
      * @returns {Object} object for the given path.
      */
     abstract(path) {
-        path = String(path);
+        const pathData = this._getPathData(path);
 
-        if (!this._abstractPathCache[path]) {
-            this._abstractPathCache[path] = {
+        if (!pathData.abstract) {
+            path = String(path);
+            pathData.abstract = {
                 get: () => this.get(path),
                 equals: val => this.equals(path, val),
                 set: val => this.assign(path, val),
@@ -261,16 +267,20 @@ export default class ReactiveStore {
             };
         }
 
-        return this._abstractPathCache[path];
+        return pathData.abstract;
     }
 
     /**
-     * Update _mutators map with the given newMutators map.
-     * @param {Object.<path, Mutator>} newMutators - path -> Mutator map to assign to _mutators.
+     * Update _pathData map with the given mutator functions.
+     * @param {Object.<path, Mutator>} mutatorMap - path -> Mutator map.
      */
-    updateMutators(newMutators) {
-        if (isObject(newMutators)) {
-            Object.assign(this._mutators, newMutators);
+    updateMutators(mutatorMap) {
+        if (isObject(mutatorMap)) {
+            for (const [path, mutator] of Object.entries(mutatorMap)) {
+                if (mutator instanceof Function) {
+                    this._getPathData(path).mutate = mutator;
+                }
+            }
         }
     }
 
@@ -285,30 +295,30 @@ export default class ReactiveStore {
     }
 
     /**
-     * Delete mutators for given path(s).
-     * @param {...path} paths - Paths to delete from _mutators.
+     * Delete stored mutator functions for given path(s).
+     * @param {...path} paths - Paths to delete mutators for.
      */
     removeMutators(...paths) {
         for (const path of paths) {
-            delete this._mutators[path];
+            delete this._getPathData(path).mutate;
         }
     }
 
     /**
      * Set value at path, creating depth where necessary, and call recursive dependency trigger helpers.
-     * @param {path} path - Path to set value at. Will be coerced to a string.
-     * @param {any} value - Value to set at path. Path will be deleted from the store if set to ReactiveStore.DELETE.
+     * @param {path} path - Path to set value at.
+     * @param {any} value - Value to set at path. Operation will cancel if value is ReactiveStore.CANCEL, or path will be deleted if value is ReactiveStore.DELETE.
      */
     _setAtPath(path, value) {
-        // Mutate value if the _noMutate flag is not set and there is a mutator function for the path        
-        if (!this._noMutate && this._mutators[path] instanceof Function) {
-            value = this._mutators[path](value, this);
+        const pathData = this._getPathData(path);
+
+        // Mutate value if the _noMutate flag is not true and there is a mutate function for the path        
+        if (!this._noMutate && pathData.mutate) {
+            value = pathData.mutate(value, this);
         }
 
         // Cancel operation if value is ReactiveStore.CANCEL
-        if (value === ReactiveStore.CANCEL) {
-            return;
-        }
+        if (value === ReactiveStore.CANCEL) return;
 
         // Unset if value is ReactiveStore.DELETE
         const unset = (value === ReactiveStore.DELETE);
@@ -322,15 +332,16 @@ export default class ReactiveStore {
             this.data = {};
         }
 
-        const pathTokens = this._getPathTokens(path),
-            lastTokenIdx = (pathTokens.length - 1),
-            parentDepNodes = [this._rootNode];
+        const { tokens } = pathData,
+            lastTokenIdx = (tokens.length - 1),
+            rootNode = this[ReactiveStore.ROOT],
+            parentDepNodes = [rootNode];
 
-        let deps = this._rootNode.subDeps,
+        let deps = rootNode.subDeps,
             search = this.data;
             
         for (let tokenIdx = 0; tokenIdx <= lastTokenIdx; tokenIdx++) {
-            const token = pathTokens[tokenIdx];
+            const token = tokens[tokenIdx];
             
             if (tokenIdx < lastTokenIdx) {
                 // Parent Token: Ensure that search[token] is traversable, step into it, and store active deps
@@ -595,36 +606,43 @@ export default class ReactiveStore {
     }
 
     /**
-     * Cache split path tokens if necessary and then return them.
-     * @param {path} path - Dot-notated path string to get tokens for.
+     * Gets the pathData object for the given path.
+     * @param {path} path - Path to get data for.
+     * @returns {Object} pathData object
      */
-    _getPathTokens(path) {
-        path = String(path);
+    _getPathData(path) {
+        const { _pathData } = this;
 
-        if (!this._pathTokensCache[path]) {
-            this._pathTokensCache[path] = path.split('.');
+        if (path !== ReactiveStore.ROOT) {
+            path = String(path);
         }
 
-        return this._pathTokensCache[path];
+        if (!_pathData.has(path)) {
+            _pathData.set(path, {
+                tokens: (typeof path === 'string')
+                    ? path.split('.')
+                    : [path]
+            });
+        }
+
+        return _pathData.get(path);
     }
 
     /**
      * Attempt to traverse down current data on the given path creating dep nodes along the way (if reactive)
-     * @param {path} path - Path to find
+     * @param {path} path - Path to search for in the store.
      * @returns {Object} An Object containing search value and related dep node
      */
     _findProperty(path) {
-        let depNode = this._rootNode,
+        let depNode = this[ReactiveStore.ROOT],
             value = this.data;
 
-        // Ignore path if it is undefined or null
-        if (path != null) {
-            const pathTokens = this._getPathTokens(path),
+        // Don't traverse further if path is ReactiveStore.ROOT
+        if (path !== ReactiveStore.ROOT) {
+            const { tokens } = this._getPathData(path),
                 reactive = Tracker.active;
         
-            for (let i = 0, numTokens = pathTokens.length; i < numTokens; i++) {
-                const token = pathTokens[i];
-        
+            for (const token of tokens) {
                 if (reactive) {
                     depNode = ensureDepNode(depNode.subDeps, token);
                 }

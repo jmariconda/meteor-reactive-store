@@ -94,8 +94,8 @@ Then in any file:
             - set(val) -> store.assign(path, val)
             - delete() -> store.delete(path)
 
-    - #### updateMutators(newPathMutatorMap: _Object_) 
-        - Update current mutators with the paths in the given path-mutator map.
+    - #### updateMutators(pathMutatorMap: _Object_) 
+        - Update current mutators for the paths in the given path -> mutator map.
         - Map should be formatted as described above in the constructor documentation.
 
     - #### noMutation(callback: _Function_)
