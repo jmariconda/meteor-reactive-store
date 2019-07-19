@@ -109,7 +109,6 @@ export default class ReactiveStore {
 
     /**
      * Get value at path (and register dependency if reactive)
-     * 
      * @param {path} [path] - Path of store value.
      * @returns {any} Current value at path.
      */
@@ -117,15 +116,36 @@ export default class ReactiveStore {
         const { depNode, value } = this._findProperty(path);
 
         if (Tracker.active) {
-            // Ensure that dep exists and depend on it
-            if (!depNode.dep) {
-                depNode.dep = new Tracker.Dependency();
+            // Ensure that valueDep exists and depend on it
+            if (!depNode.valueDep) {
+                depNode.valueDep = new Tracker.Dependency();
             }
 
-            depNode.dep.depend();
+            depNode.valueDep.depend();
         }
 
         return value;
+    }
+
+    /**
+     * Get existence of path (and register dependency if reactive)
+     * @param {path} path - Store path to check.
+     * @returns {boolean} Existence of path. 
+     */
+    has(path) {
+        const { depNode, exists } = this._findProperty(path);
+
+        if (Tracker.active) {
+            // Ensure that existsDep exists and depend on it
+            if (!depNode.existsDep) {
+                depNode.existsDep = new Tracker.Dependency();
+                depNode.exists = exists;
+            }
+
+            depNode.existsDep.depend();
+        }
+
+        return exists;
     }
 
     /**
@@ -379,8 +399,8 @@ export default class ReactiveStore {
     
                     // Trigger dep at token and any subDeps it may have
                     if (depNode) {
-                        this._triggerAllDeps(depNode.subDeps, oldValue, undefined);
-                        this._registerChange(depNode, undefined);
+                        this._triggerAllDeps(depNode.subDeps, oldValue, value);
+                        this._registerChange(depNode, value);
                     }
     
                 } else {
@@ -424,28 +444,38 @@ export default class ReactiveStore {
 
     /**
      * If given dep is defined, add it to the change data set to be processed after ops have completed.
-     * Also process any equality dependency changes that might have happened.
+     * Also process any existence/equality dependency changes that might have happened.
      * @param {DepNode} depNode - Dependency Node to register.
      * @param {any} newValue - New value at corresponding path in the store
      */
     _registerChange(depNode, newValue) {
-        if (depNode) {
-            const changedDepSet = this._changeData.deps;
+        if (!depNode) return;
+    
+        const changedDepSet = this._changeData.deps,
+            unset = (newValue === ReactiveStore.DELETE);
 
-            if (depNode.dep) {
-                changedDepSet.add(depNode.dep);
-            }
+        // Trigger value dependency
+        if (depNode.valueDep) {
+            changedDepSet.add(depNode.valueDep);
+        }
 
-            if (depNode.eqDepMap) {
-                const eqDep = depNode.eqDepMap.get(newValue),
-                    { activeEqDep } = depNode;
+        // Check if existence dependency should be triggered 
+        if (depNode.existsDep && (depNode.exists ? unset : !unset)) {
+            changedDepSet.add(depNode.existsDep);
+            depNode.exists = !depNode.exists;
+        }
 
-                if (eqDep !== activeEqDep) {
-                    if (eqDep) changedDepSet.add(eqDep);
-                    if (activeEqDep) changedDepSet.add(activeEqDep);
+        // Check if equality dependencies should be triggered
+        if (depNode.eqDepMap) {
+            // In terms of "value", unset and undefined are the same, so just use undefined
+            const eqDep = depNode.eqDepMap.get(unset ? undefined : newValue),
+                { activeEqDep } = depNode;
 
-                    depNode.activeEqDep = eqDep;
-                }
+            if (eqDep !== activeEqDep) {
+                if (eqDep) changedDepSet.add(eqDep);
+                if (activeEqDep) changedDepSet.add(activeEqDep);
+
+                depNode.activeEqDep = eqDep;
             }
         }
     }
@@ -473,7 +503,7 @@ export default class ReactiveStore {
                 for (const key of Object.keys(deps)) {
                     const curValueAtKey = (curValueIsTraversable && curValue.propertyIsEnumerable(key))
                         ? curValue[key]
-                        : undefined;
+                        : ReactiveStore.DELETE;
     
                     this._registerChange(deps[key], curValueAtKey);
     
@@ -635,7 +665,8 @@ export default class ReactiveStore {
      */
     _findProperty(path) {
         let depNode = this[ReactiveStore.ROOT],
-            value = this.data;
+            value = this.data,
+            exists = true;
 
         // Don't traverse further if path is ReactiveStore.ROOT
         if (path !== ReactiveStore.ROOT) {
@@ -647,17 +678,18 @@ export default class ReactiveStore {
                     depNode = ensureDepNode(depNode.subDeps, token);
                 }
         
-                if (value !== undefined) {
+                if (exists) {
                     if (ReactiveStore.isTraversable(value) && value.propertyIsEnumerable(token)) {
                         value = value[token];
                     } else {
                         value = undefined;
+                        exists = false;
                         if (!reactive) break;
                     }
                 }
             }
         }
     
-        return { depNode, value };
+        return { depNode, value, exists };
     }
 }
