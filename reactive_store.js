@@ -1,5 +1,10 @@
 import { Tracker } from 'meteor/tracker';
-import { isObject, ensureDepNode, setsAreEqual } from './helpers';
+import {
+    isObject,
+    useStrictEqualityCheck,
+    ensureDepNode,
+    setsAreEqual
+} from './helpers';
  
 /**
  * @typedef path - Dot-notated store path.
@@ -40,7 +45,7 @@ export default class ReactiveStore {
     // Symbol that represents the 'path' to the root value
     static ROOT = Symbol('ROOT_STORE_PATH');
 
-    // Symbol that can be assigned to path to delete it from the store
+    // Symbol that can be assigned to path to delete it from the store (also used internally to represent non-existent value)
     static DELETE = Symbol('DELETE_STORE_PATH');
 
     // Symbol that can be returned from a mutator to cancel the assign/delete operation
@@ -105,6 +110,12 @@ export default class ReactiveStore {
         }
 
         return value;
+    }
+
+    // Return obj[key] if obj is traversable and key is an enumerable property within it; otherwise, return ReactiveStore.DELETE to indicate nonexistant value
+    static _valueAtKey(obj, key) {
+        const keyExists = (ReactiveStore.isTraversable(obj) && obj.propertyIsEnumerable(key));
+        return keyExists ? obj[key] : ReactiveStore.DELETE;
     }
 
     /**
@@ -173,9 +184,9 @@ export default class ReactiveStore {
             ([path, value] = params);
         }
 
-        // Throw error if value is not primitive
-        if (value instanceof Object) {
-            throw new Error('ReactiveStore: Only primitive values can be registered as equality dependencies (number, string, boolean, undefined, null, symbol).');
+        // Throw error if we can't use strict equality check for value
+        if (!useStrictEqualityCheck(value)) {
+            throw new Error('ReactiveStore: Only primitive values (number, string, boolean, undefined, null, symbol) and functions can be registered as equality dependencies.');
         }
 
         // Ensure that equality dep exists for the given value and depend on it
@@ -460,10 +471,15 @@ export default class ReactiveStore {
         }
 
         // Check if existence dependency should be triggered 
-        if (depNode.existsDep && (depNode.exists ? unset : !unset)) {
-            changedDepSet.add(depNode.existsDep);
-            depNode.exists = !depNode.exists;
+        if (depNode.existsDep) {
+            const existenceChanged = (depNode.exists ? unset : !unset);
+
+            if (depNode.existsDep && existenceChanged) {
+                changedDepSet.add(depNode.existsDep);
+                depNode.exists = !depNode.exists;
+            }
         }
+      
 
         // Check if equality dependencies should be triggered
         if (depNode.eqDepMap) {
@@ -498,12 +514,8 @@ export default class ReactiveStore {
             if (!seenTraversableSet.has(keyFilter)) {
                 seenTraversableSet.add(keyFilter);
 
-                const curValueIsTraversable = ReactiveStore.isTraversable(curValue);
-
                 for (const key of Object.keys(deps)) {
-                    const curValueAtKey = (curValueIsTraversable && curValue.propertyIsEnumerable(key))
-                        ? curValue[key]
-                        : ReactiveStore.DELETE;
+                    const curValueAtKey = ReactiveStore._valueAtKey(curValue, key);
     
                     this._registerChange(deps[key], curValueAtKey);
     
@@ -530,97 +542,94 @@ export default class ReactiveStore {
         let newValueTraversed = false,
             changed = false;
     
-        if (oldValue instanceof Object) {
-            // oldValue is instantiated reference 
-            if (oldValue === newValue) {
-                // Cannot check for differences if oldValue and newValue are literally the same reference, so assume changed.
+        if (useStrictEqualityCheck(oldValue)) {
+            // Perform strict equality check to determine change if we can
+            changed = (oldValue !== newValue);
+
+        } else if (oldValue === newValue) {
+            // Cannot check for differences if oldValue and newValue are literally the same reference, so assume changed.
+            changed = true;
+
+        } else if (ReactiveStore.isTraversable(oldValue)) {
+            // If oldValue is traversable...
+            if (!seenTraversableSet) {
+                seenTraversableSet = new Set();
+            }
+
+            if (seenTraversableSet.has(oldValue) || seenTraversableSet.has(newValue)) {
+                // Assume changed if oldValue or newValue has already been seen once because cyclical data structures cannot be checked for deep changes
                 changed = true;
 
-            } else if (ReactiveStore.isTraversable(oldValue)) {
-                // If oldValue is traversable...
-                if (!seenTraversableSet) {
-                    seenTraversableSet = new Set();
-                }
+            } else {
+                // Otherwise, add oldValue to the seenTraversableSet and continue
+                seenTraversableSet.add(oldValue);
 
-                if (seenTraversableSet.has(oldValue) || seenTraversableSet.has(newValue)) {
-                    // Assume changed if oldValue or newValue has already been seen once because cyclical data structures cannot be checked for deep changes
-                    changed = true;
+                const keySet = new Set(Object.keys(oldValue));
 
-                } else {
-                    // Otherwise, add oldValue to the seenTraversableSet and continue
-                    seenTraversableSet.add(oldValue);
+                if (ReactiveStore.isTraversable(newValue)) {
+                    // If newValue is also traversable, add it to the seenTraversableSet
+                    seenTraversableSet.add(newValue);
 
-                    const newValueIsTraversable = ReactiveStore.isTraversable(newValue),
-                        keySet = new Set(Object.keys(oldValue));                               
+                    // Add its keys to the keySet
+                    const newValueKeys = Object.keys(newValue);
 
-                    if (newValueIsTraversable) {
-                        // If newValue is also traversable, add it to the seenTraversableSet
-                        seenTraversableSet.add(newValue);
-
-                        // Add its keys to the keySet
-                        const newValueKeys = Object.keys(newValue);
-
-                        // Definitely changed if values don't share the same constructor or have a different amount of keys
-                        if (oldValue.constructor !== newValue.constructor || keySet.size !== newValueKeys.length) {
-                            changed = true;
-                        }
-
-                        // Only process newValueKeys if we don't already know of any changes, or there are subDeps to process
-                        if (!changed || subDeps) {
-                            // Add all newValueKeys to the keySet
-                            for (const key of newValueKeys) {
-                                if (!keySet.has(key)) {
-                                    // Definitely changed if newValue key does not exist in oldValue and its value is not undefined
-                                    // NOTE: The presence of a new key doesn't matter if it is set to undefined because that means the value hasn't changed.
-                                    if (!changed && newValue[key] !== undefined) {
-                                        changed = true;
-                                        if (!subDeps) break;
-                                    }
-
-                                    keySet.add(key);
-                                }
-                            }
-                        }
-
-                        // Set newValueTraversed to true so that _triggerAllDeps check below is skipped
-                        newValueTraversed = true;
-                        
-                    } else {
-                        // Definitely changed if newValue is not traversable
+                    // Definitely changed if values don't share the same constructor or have a different amount of keys
+                    if (oldValue.constructor !== newValue.constructor || keySet.size !== newValueKeys.length) {
                         changed = true;
                     }
 
-                    // Only initiate further traversal if we don't already know of any changes, or there are subDeps to process
+                    // Only process newValueKeys if we don't already know of any changes, or there are subDeps to process
                     if (!changed || subDeps) {
-                        // Iterate through all unique keys between the old/new values and check for deep changes
-                        for (const key of keySet) {
-                            const subDepNode = subDeps && subDeps[key];
-                            
-                            // Only traverse if change has not been found or there is a sub-dependency to check
-                            if (!changed || subDepNode) {
-                                const newValueAtKey = newValueIsTraversable ? newValue[key] : undefined,
-                                    subValueChanged = this._triggerChangedDeps(subDepNode, oldValue[key], newValueAtKey, seenTraversableSet);
-                                
-                                if (!changed && subValueChanged) {
+                        // Add all newValueKeys to the keySet
+                        for (const key of newValueKeys) {
+                            if (!keySet.has(key)) {
+                                // Definitely changed if newValue key does not exist in oldValue and its value is not undefined
+                                // NOTE: The presence of a new key doesn't matter if it is set to undefined because that means the value hasn't changed.
+                                if (!changed && newValue[key] !== undefined) {
                                     changed = true;
+                                    if (!subDeps) break;
                                 }
-                            }                        
+
+                                keySet.add(key);
+                            }
                         }
                     }
-                }
-                
-            } else {
-                // Run custom equality check for the oldValue's instance type (e.g. Set, Date, etc) if there is one
-                const isEqual = ReactiveStore.eqCheckMap.get(oldValue.constructor);
 
-                if (!isEqual || !isEqual(oldValue, newValue)) {
+                    // Set newValueTraversed to true so that _triggerAllDeps check below is skipped
+                    newValueTraversed = true;
+                    
+                } else {
+                    // Definitely changed if newValue is not traversable
                     changed = true;
                 }
-            }
 
-        } else if (oldValue !== newValue) {
-            // oldValue is primitive/null: perform basic equivalency check
-            changed = true;
+                // Only initiate further traversal if we don't already know of any changes, or there are subDeps to process
+                if (!changed || subDeps) {
+                    // Iterate through all unique keys between the old/new values and check for deep changes
+                    for (const key of keySet) {
+                        const subDepNode = subDeps && subDeps[key];
+                        
+                        // Only traverse if change has not been found or there is a sub-dependency to check
+                        if (!changed || subDepNode) {
+                            const oldValueAtKey = ReactiveStore._valueAtKey(oldValue, key),
+                                newValueAtKey = ReactiveStore._valueAtKey(newValue, key),
+                                valueAtKeyChanged = this._triggerChangedDeps(subDepNode, oldValueAtKey, newValueAtKey, seenTraversableSet);
+                            
+                            if (!changed && valueAtKeyChanged) {
+                                changed = true;
+                            }
+                        }                        
+                    }
+                }
+            }
+            
+        } else {
+            // Run custom equality check for the oldValue's instance type (e.g. Set, Date, etc) if there is one
+            const isEqual = ReactiveStore.eqCheckMap.get(oldValue.constructor);
+
+            if (!isEqual || !isEqual(oldValue, newValue)) {
+                changed = true;
+            }
         }
 
         // Trigger all deep dependencies present in newValue if it has not been traversed

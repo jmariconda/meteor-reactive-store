@@ -55,7 +55,7 @@ Then in any file:
       #### equals(path: _String_, value: _Any_)
         - If no path is provided, reactively returns the equivalency of the root value to the given value.
         - If a path is provided, reactively returns the equivalency of the value at that path to the given value.
-        - __Important:__ Only primitive values can be checked for equivalency (i.e. string, number, boolean, null, undefined, Symbol)
+        - __Important:__ Only primitive values (string, number, boolean, null, undefined, symbol) and functions can be checked for equivalency
         - The benefit of using this over `get` is that it will only trigger a re-run when the equivalency status changes (e.g. `store.equals(1)` will only fire when the root value is something else and becomes 1, or is 1 and becomes something else)
 
 - ### Modifiers:
