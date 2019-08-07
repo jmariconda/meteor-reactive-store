@@ -2,6 +2,12 @@ export function isObject(val) {
     return (val instanceof Object && val.constructor === Object);
 }
 
+const SpacebarsKw = Package.spacebars && Package.spacebars.Spacebars.kw;
+
+export function isSpacebarsKw(val) {
+    return (SpacebarsKw) ? (val instanceof SpacebarsKw) : false;
+}
+
 export function useStrictEqualityCheck(val) {
     // NOTE: Functions and (polyfilled) Symbols are technically Objects, but should be treated as primitives for equality checks
     return !(val instanceof Object) || (val instanceof Function) || (val instanceof Symbol);

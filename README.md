@@ -46,10 +46,6 @@ Then in any file:
         - The dependency will only re-run if the queried value changes.
         - This is a totally safe function, so even if the path doesn't exist yet, it will return undefined and re-run if/when the path does exist and the value has changed.
         - __Important__: Only enumerable properties can be traversed (i.e. any keys that would be returned from `Object.keys`). This means, for example, that trying to access a stored array's 'length' property or some prototype function will always result in undefined. This applies for any method that accepts a path parameter.
-
-    - #### has(path: _String_)
-        - Reactively returns the existence of the given path in the store.
-        - This is distinct from `get` and `equals` because those are reactive upon value (i.e. they see a non-existent path and a path set to undefined as the same thing), whereas this is only reactive upon whether or not the path exists.
     
     - #### equals(value: _Any_)
       #### equals(path: _String_, value: _Any_)
@@ -57,6 +53,10 @@ Then in any file:
         - If a path is provided, reactively returns the equivalency of the value at that path to the given value.
         - __Important:__ Only primitive values (string, number, boolean, null, undefined, symbol) and functions can be checked for equivalency
         - The benefit of using this over `get` is that it will only trigger a re-run when the equivalency status changes (e.g. `store.equals(1)` will only fire when the root value is something else and becomes 1, or is 1 and becomes something else)
+
+    - #### has(path: _String_)
+        - Reactively returns the existence of the given path in the store.
+        - This is distinct from `get` and `equals` because those are reactive upon value (i.e. they see a non-existent path and a path set to undefined as the same thing), whereas this is only reactive upon whether or not the path exists.
 
 - ### Modifiers:
 
@@ -88,12 +88,13 @@ Then in any file:
 - ### Utility:
 
     - #### abstract(path: _String_)
-        - Creates a ReactiveVar-like object with dedicated get/equals/set/delete functions to access/modify the given path in the store.
+        - Creates an ReactiveVar-like object with dedicated functions to access/modify the given path in the store.
         - Created object is cached after the first call, so repeated calls for the same path will always return the same object.
         - Useful if you want to pass around access to a specific field in the store via a simpler interface without having to pass around the store itself.
         - The internal functions of the generated object map like so:
             - get() -> store.get(path)
             - equals(val) -> store.equals(path, val)
+            - exists() -> store.has(path)
             - set(val) -> store.assign(path, val)
             - delete() -> store.delete(path)
 
@@ -141,16 +142,41 @@ Then in any file:
 import ReactiveStore from 'meteor/jmaric:deep-reactive-store';
 
 const store = new ReactiveStore({
-    // Initial data
-}, {
-    // Path mutator
-    'some.deep.path': function (value, store) {
-        /*
-         * This will run whenever 'some.deep.path' is directly assigned or deleted to/from the store and use the returned value for the respective operation.
-         * From inside of here you can also use the store parameter to perform secondary actions such as running assign/delete on other fields.
-         */
-        
-        return value;
+    data() {
+        return {
+            // Initial data
+            firstName: 'Reactive',
+            lastName: 'Store',
+            fullName: ReactiveStore.computed(function () {
+                return `${this.get('firstName')} ${this.get('lastName')}`;
+            })
+        };
+    },
+    mutators: {
+        // Path mutator
+        some: {
+            deep: {
+                path(value, store) {
+                    /*
+                     * This will run whenever 'some.deep.path' is directly assigned or deleted to/from the store and use the returned value for the respective operation.
+                     * From inside of here you can also use the store parameter to perform secondary actions such as running assign/delete on other fields.
+                     */
+                }
+            }
+        },
+        'another.deep.path': function (value, store) {
+            /*
+             * This will run whenever 'another.deep.path' is directly assigned or deleted to/from the store and use the returned value for the respective operation.
+             * From inside of here you can also use the store parameter to perform secondary actions such as running assign/delete on other fields.
+             */
+            
+            return value;
+        }
+    },
+    methods: {
+        someMethod(...params) {
+
+        }
     }
 });
 

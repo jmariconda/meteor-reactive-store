@@ -1,6 +1,7 @@
 import { Tracker } from 'meteor/tracker';
 import {
     isObject,
+    isSpacebarsKw,
     useStrictEqualityCheck,
     ensureDepNode,
     setsAreEqual
@@ -22,24 +23,59 @@ import {
  * @returns {any} Mutated value
  */
 
+const Blaze = (Package.blaze) ? Package.blaze.Blaze : {};
+
 /**
  * @class ReactiveStore
  */
 export default class ReactiveStore {
     /**
-     * @param {any} data - Initial root value.
-     * @param {Object.<path, Mutator>} mutatorMap - path -> Mutator map
+     * @param {Object} [config] - Initial store configuration
+     * @param {Function} [config.data] - Function that returns the initial root value.
+     * @param {Object.<path, Mutator>} [config.mutators] - path -> Mutator map
+     * @param {Object.<string, Function>} [config.methods] - methodName -> Function map
      */
-    constructor(data, mutatorMap) {
-        this._isTraversable = ReactiveStore.isTraversable(data);
+    constructor(config = {}) {
+        const { data, mutators, methods } = config;
+
+        this.updateMutators(mutators);
+        this.updateMethods(methods);
+        
         this._changeData = { deps: new Set(), opCount: 0 };
         this._pathData = new Map();
         this._noMutate = false;
+        this._methods = {};
 
-        this.updateMutators(mutatorMap);
-        
         ensureDepNode(this, ReactiveStore.ROOT);
-        this.data = data;
+
+        // Initialize data
+        this._initData = (data instanceof Function) ? data : () => {};       
+        this.data = this._initData();
+        this._isTraversable = ReactiveStore.isTraversable(this.data);
+
+        // Parse initial data for computed values
+        if (this._isTraversable) {
+            ReactiveStore.parse(this.data, (path, value) => {
+                if (value instanceof Function && value[ReactiveStore.COMPUTED] === true) {
+                    value = this.setComputation(path, value);
+                }
+
+                return value;
+            });
+        }
+
+        // If store was initialized within a Blaze view, automatically stop all computations when the view is destroyed
+        const { currentView } = Blaze;
+
+        if (currentView) {
+            const stopComputationsOnDestroyed = () => {
+                this.stopComputations().then(() => {
+                    currentView.removeViewDestroyedListener(stopComputationsOnDestroyed);
+                });
+            };
+
+            currentView.onViewDestroyed(stopComputationsOnDestroyed);
+        }
     }
 
     // Symbol that represents the 'path' to the root value
@@ -53,6 +89,9 @@ export default class ReactiveStore {
 
     // Symbol that marks a value that would normally be traversable as non-traversable
     static SHALLOW = Symbol('SHALLOW_STORE_DATA');
+
+    // Symbol that marks an assign function as computed
+    static COMPUTED = Symbol('COMPUTED_STORE_DATA');
 
     // Map of constructors to equality check functions
     static eqCheckMap = new Map([
@@ -79,6 +118,87 @@ export default class ReactiveStore {
         ]
     ]);
 
+    // Abstract path class
+    static Abstract = class Abstract {
+        constructor(store, path) {
+            this._store = store;
+            this._basePath = String(path);
+            this._pathCache = {};
+        }
+    
+        get(subPath) {
+            const path = (subPath)
+                ? this._getPath(subPath)
+                : this._basePath;
+    
+            return this._store.get(path);
+        }
+    
+        equals(...params) {
+            let path, value;
+    
+            if (params.length > 1 && !isSpacebarsKw(params[1])) {
+                // Two-parameter config
+                path = this._getPath(params[0]);
+                ({ 1: value } = params);
+            } else {
+                // One-parameter config
+                path = this._basePath;
+                ({ 0: value } = params);
+            }
+    
+            return this._store.equals(path, value);
+        }
+    
+        exists() {
+            return this._store.has(this._basePath);
+        }
+    
+        has(subPath) {
+            return this._store.has(this._getPath(subPath));
+        }
+    
+        set(value) {
+            this._store.assign(this._basePath, value);
+        }
+    
+        assign(...params) {
+            const pathValueMap = {};
+            
+            if (params.length > 1 && !isSpacebarsKw(params[1])) {
+                // Two-parameter config
+                const [subPath, value] = params;
+    
+                pathValueMap[this._getPath(subPath)] = value;
+            } else {
+                // One-parameter config
+                const [subPathValueMap] = params;
+    
+                if (isObject(subPathValueMap)) {
+                    for (const [subPath, value] of Object.entries(subPathValueMap)) {
+                        pathValueMap[this._getPath(subPath)] = value;
+                    }
+                }
+            }
+    
+            this._store.assign(pathValueMap);
+        }
+    
+        delete(...subPaths) {            
+            this._store.delete(...subPaths.map(subPath => this._getPath(subPath)));
+        }
+    
+        _getPath(subPath) {
+            const { _pathCache } = this;
+    
+            if (!_pathCache[subPath]) {
+                _pathCache[subPath] = `${this._basePath}.${subPath}`;
+            }
+    
+            return _pathCache[subPath];
+        }
+    };
+
     // Add custom equality check for instances of the given constuctor
     static addEqualityCheck(constructor, isEqual) {
         if (!(constructor instanceof Function) || !(isEqual instanceof Function) || isEqual.length !== 2) {
@@ -90,26 +210,44 @@ export default class ReactiveStore {
 
     // Remove custom equality check for instances of the given constuctor
     static removeEqualityCheck(constructor) {
-        if (!(constructor instanceof Function)) {
-            throw new Error('You must provide a valid constructor function/class.');
-        }
-
         ReactiveStore.eqCheckMap.delete(constructor);
     }
 
-    // Returns true if the given value is traversable (is Object/Array and doesn't have ReactiveStore.SHALLOW as a key set to true)
+    // Returns true if the given value is traversable (is Object/Array and doesn't have ReactiveStore.SHALLOW as a key set to a truthy value)
     static isTraversable(value) {
-        // NOTE: Being very specific about shallow check because Symbol polyfill seems to add all symbols to all objects by default set to undefined (so 'ReactiveStore.SHALLOW in value' would always be true).
-        return (isObject(value) || Array.isArray(value)) && (value[ReactiveStore.SHALLOW] !== true);
+        return (isObject(value) || Array.isArray(value)) && !value[ReactiveStore.SHALLOW];
     }
 
-    // Wrapper for traversable values that marks them to not be traversed for changes/sub-deps
+    // If value is traversable, mark it with the ReactiveStore.SHALLOW Symbol so that it not anymore
     static shallow(value) {
         if (ReactiveStore.isTraversable(value)) {
+            // Use Object.defineProperty so that property is not enumerable
             Object.defineProperty(value, ReactiveStore.SHALLOW, { value: true });
         }
 
         return value;
+    }
+
+    // If value is a function, mark it with the ReactiveStore.COMPUTED Symbol to flag it for computation
+    static computed(value) {
+        if (value instanceof Function) {
+            // Use Object.defineProperty so that property is not enumerable
+            Object.defineProperty(value, ReactiveStore.COMPUTED, { value: true });
+        }
+
+        return value;
+    }
+
+    // Traverse down all traversable in the given obj and call the given function for each key/val pair
+    static parse(obj, func, path) {
+        if (ReactiveStore.isTraversable(obj)) {
+            for (const [key, value] of Object.entries(obj)) {
+                const currentPath = (path ? `${path}.${key}` : key);
+
+                obj[key] = func(currentPath, value);
+                ReactiveStore.parse(obj[key], func, currentPath);
+            }
+        }
     }
 
     // Return obj[key] if obj is traversable and key is an enumerable property within it; otherwise, return ReactiveStore.DELETE to indicate nonexistant value
@@ -175,13 +313,13 @@ export default class ReactiveStore {
         // Interpret params based on length
         let path, value;
 
-        if (params.length < 2) {
+        if (params.length > 1 && !isSpacebarsKw(params[1])) {
+            // Two-parameter config
+            ([path, value] = params);
+        } else {
             // One-parameter config
             path = ReactiveStore.ROOT;
             ([value] = params);
-        } else {
-            // Two-parameter config
-            ([path, value] = params);
         }
 
         // Throw error if we can't use strict equality check for value
@@ -229,7 +367,9 @@ export default class ReactiveStore {
         this._isTraversable = ReactiveStore.isTraversable(value);
         this.data = value;
 
-        this._watchChanges(() => this._triggerChangedDeps(this[ReactiveStore.ROOT], oldValue, value));
+        this._watchChanges(() => {
+            this._triggerChangedDeps(this[ReactiveStore.ROOT], oldValue, value);
+        });
     }
 
     /**
@@ -243,9 +383,16 @@ export default class ReactiveStore {
      * @param {Object.<path, any>} pathValueMap - Object map of path -> value pairs to be assigned.
      */
     assign(...params) {
-        const pathValueMap = (params.length >= 2)
-            ? { [params[0]]: params[1] }
-            : params[0];
+        let pathValueMap;
+        
+        if (params.length > 1 && !isSpacebarsKw(params[1])) {
+            // Two-parameter config
+            const [path, value] = params;
+            pathValueMap = { [path]: value };
+        } else {
+            // One-parameter config
+            [pathValueMap] = params;
+        }
 
         if (isObject(pathValueMap)) {
             this._watchChanges(() => {
@@ -261,7 +408,7 @@ export default class ReactiveStore {
      * @param {...path} paths - Paths to delete from the store.
      */
     delete(...paths) {
-        // Only run if root data is traversable
+        // Only run if root value is traversable
         if (this._isTraversable) {
             this._watchChanges(() => {
                 for (const path of paths) {
@@ -272,7 +419,7 @@ export default class ReactiveStore {
     }
 
     /**
-     * If root data is currently traversable, set it to a new instance of the current constructor.
+     * If root value is currently traversable, set it to a new instance of the current constructor.
      * Otherwise, set it to undefined.
      */
     clear() {
@@ -280,37 +427,140 @@ export default class ReactiveStore {
     }
 
     /**
+     * If there was a data function provided in the initial config, reset the root value to the value returned by that.
+     * Otherwise, set it to undefined.
+     */
+    reset() {
+        this.set(this._initData());
+    }
+
+    /**
      * Create a ReactiveVar-like object with dedicated get/equals/set/delete functions to access/modify the given path in the store.
      * Created object is cached so that repeated calls for the same path will return the same object.
      * @param {path} path - Path to create object for.
-     * @returns {Object} object for the given path.
+     * @returns {ReactiveStore.Abstract} object for the given path.
      */
     abstract(path) {
         const pathData = this._getPathData(path);
 
         if (!pathData.abstract) {
-            path = String(path);
-            pathData.abstract = {
-                get: () => this.get(path),
-                equals: val => this.equals(path, val),
-                set: val => this.assign(path, val),
-                delete: () => this.delete(path)
-            };
+            pathData.abstract = new ReactiveStore.Abstract(this, path);
         }
 
         return pathData.abstract;
     }
 
     /**
-     * Update _pathData map with the given mutator functions.
-     * @param {Object.<path, Mutator>} mutatorMap - path -> Mutator map.
+     * 
+     * @param {path} path 
+     * @param {Function} value 
      */
-    updateMutators(mutatorMap) {
-        if (isObject(mutatorMap)) {
-            for (const [path, mutator] of Object.entries(mutatorMap)) {
-                if (mutator instanceof Function) {
-                    this._getPathData(path).mutate = mutator;
+    startComputation(path, value) {
+        const pathData = this._getPathData(path);
+
+        if (pathData.computation) {
+            pathData.computation.stop();
+        }
+
+        let computedValue;
+
+        pathData.computation = Tracker.autorun(({ firstRun }) => {
+            computedValue = value();
+            
+            if (!firstRun) {
+                this.assign({ [path]: computedValue });
+            }
+        });
+
+        return computedValue;
+    }
+
+    /**
+     * Stops all currently running computations.
+     * @returns {Promise} Promise that resolves when all computations have stopped.
+     */
+    stopComputations() {
+        const stopPromises = [];
+
+        for (const pathData of this._pathData.values()) {
+            const { computation } = pathData;
+
+            if (computation) {
+                delete pathData.computation;
+                stopPromises.push(new Promise(resolve => computation.onStop(resolve)));
+                computation.stop();
+            }
+        }
+
+        return Promise.all(stopPromises);
+    }
+
+    /**
+     * Update internal methods for the store
+     * @param {Object.<string, Function>} methodMap - methodName -> Function map
+     */
+    updateMethods(methodMap) {
+        if (methodMap instanceof Object) {
+            for (const [methodName, methodFunction] of Object.entries(methodMap)) {
+                if (methodFunction instanceof Function) {
+                    this._methods[methodName] = methodFunction;
                 }
+            }
+        }
+    }
+
+    /**
+     * Delete stored methods with the given name(s).
+     * @param {...string} methodNames - Names of methods to delete.
+     */
+    removeMethods(...methodNames) {
+        for (const methodName of methodNames) {
+            delete this._methods[methodName];
+        }
+    }
+
+    /**
+     * 
+     * @param {string} methodName - Name of store method to call
+     * @param  {...any} params - Params to pass to be passed to the method
+     * @returns {any} Result of the method call
+     */
+    call(methodName, ...params) {
+        if (!this._methods.hasOwnProperty(methodName)) {
+            throw new Error(`Method ${methodName} is not defined.`);
+        }
+
+        return this._methods[methodName].apply(this, params);
+    }
+
+    /**
+     * Update pathData map with the given mutator functions.
+     * @param {Object.<path, Mutator>} mutatorMap - path -> Mutator map.
+     * @param {path} [path] - Current base path to prepend to the map keys.
+     */
+    updateMutators(mutatorMap, path) {
+        if (mutatorMap instanceof Object) {
+            for (const [key, val] of Object.entries(mutatorMap)) {
+                const nextPath = path ? `${path}.${key}` : key;
+
+                if (val instanceof Function) {
+                    this._getPathData(nextPath).mutate = val;
+                } else {
+                    this.updateMutators(val, nextPath);
+                }
+            }
+        }
+    }
+
+    /**
+     * Delete stored mutator functions for given path(s).
+     * @param {...path} paths - Paths to delete mutators for.
+     */
+    removeMutators(...paths) {
+        for (const path of paths) {
+            const pathData = this._getPathData(path, false/* init */);
+            if (pathData) {
+                delete pathData.mutate;
             }
         }
     }
@@ -323,16 +573,6 @@ export default class ReactiveStore {
         this._noMutate = true;
         op();
         this._noMutate = false;
-    }
-
-    /**
-     * Delete stored mutator functions for given path(s).
-     * @param {...path} paths - Paths to delete mutators for.
-     */
-    removeMutators(...paths) {
-        for (const path of paths) {
-            delete this._getPathData(path).mutate;
-        }
     }
 
     /**
@@ -647,21 +887,22 @@ export default class ReactiveStore {
     /**
      * Gets the pathData object for the given path.
      * @param {path} path - Path to get data for.
+     * @param {boolean} [init] - Initialize non-existent pathData if set to true.
      * @returns {Object} pathData object
      */
-    _getPathData(path) {
+    _getPathData(path, init = true) {
         const { _pathData } = this;
 
         if (path !== ReactiveStore.ROOT) {
             path = String(path);
         }
 
-        if (!_pathData.has(path)) {
-            _pathData.set(path, {
-                tokens: (typeof path === 'string')
-                    ? path.split('.')
-                    : [path]
-            });
+        if (init && !_pathData.has(path)) {
+            const tokens = (typeof path === 'string')
+                ? path.split('.')
+                : [path];
+
+            _pathData.set(path, { tokens });
         }
 
         return _pathData.get(path);

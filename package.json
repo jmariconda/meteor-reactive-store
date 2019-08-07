@@ -1,6 +1,6 @@
 {
   "name": "meteor-reactive-store",
-  "version": "2.3.1",
+  "version": "3.0.0",
   "description": "A reactive data storage for Meteor's Tracker interface that supports deep dependency tracking.",
   "main": "reactive_store.js",
   "dependencies": {},
