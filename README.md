@@ -143,37 +143,34 @@ import ReactiveStore from 'meteor/jmaric:deep-reactive-store';
 
 const store = new ReactiveStore({
     data() {
+        // Initial store data
         return {
-            // Initial data
             firstName: 'Reactive',
-            lastName: 'Store',
-            fullName: ReactiveStore.computed(function () {
-                return `${this.get('firstName')} ${this.get('lastName')}`;
-            })
+            lastName: 'Store'
         };
     },
-    mutators: {
-        // Path mutator
-        some: {
-            deep: {
-                path(value, store) {
-                    /*
-                     * This will run whenever 'some.deep.path' is directly assigned or deleted to/from the store and use the returned value for the respective operation.
-                     * From inside of here you can also use the store parameter to perform secondary actions such as running assign/delete on other fields.
-                     */
-                }
-            }
+    computations: {
+        // Path value computations
+        fullName() {
+            return `${this.get('firstName')} ${this.get('lastName')}`;
         },
-        'another.deep.path': function (value, store) {
+        'some.deep.path'() {
+            return Boolean(this.has('field') && this.has('some.other.field'));
+        }
+    }
+    mutators: {
+        // Path mutators
+        'some.deep.path'(value) {
             /*
-             * This will run whenever 'another.deep.path' is directly assigned or deleted to/from the store and use the returned value for the respective operation.
-             * From inside of here you can also use the store parameter to perform secondary actions such as running assign/delete on other fields.
+             * This will run whenever 'another.deep.path' is directly assigned/deleted to/from the store and use the returned value for the respective operation.
+             * From inside of here you can also use the store via the 'this' context to perform secondary actions such as running assign/delete on other fields.
              */
             
             return value;
         }
     },
     methods: {
+        // Store methods
         someMethod(...params) {
 
         }

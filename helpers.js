@@ -1,11 +1,18 @@
+import { SHALLOW, DELETE } from './symbols';
+
+const SpacebarsKw = Package.spacebars && Package.spacebars.Spacebars.kw;
+
 export function isObject(val) {
     return (val instanceof Object && val.constructor === Object);
 }
 
-const SpacebarsKw = Package.spacebars && Package.spacebars.Spacebars.kw;
-
 export function isSpacebarsKw(val) {
     return (SpacebarsKw) ? (val instanceof SpacebarsKw) : false;
+}
+
+// Returns true if the given value is traversable (is Object/Array and doesn't have SHALLOW as a key set to a truthy value)
+export function isTraversable(value) {
+    return (isObject(value) || Array.isArray(value)) && !value[SHALLOW];
 }
 
 export function useStrictEqualityCheck(val) {
@@ -38,4 +45,10 @@ export function setsAreEqual(setA, setB) {
     }
 
     return equal;
+}
+
+// Return obj[key] if obj is traversable and key is an enumerable property within it; otherwise, return DELETE to indicate nonexistant value
+export function valueAtKey(obj, key) {
+    const keyExists = (isTraversable(obj) && obj.propertyIsEnumerable(key));
+    return keyExists ? obj[key] : DELETE;
 }
