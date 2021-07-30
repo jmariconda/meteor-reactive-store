@@ -1,6 +1,6 @@
 # Reactive Store
 
-Reactive Store is a reactive data storage for Meteor's Tracker interface that supports deep dependency tracking.
+Reactive Store is a reactive data storage for Meteor's [Tracker](https://docs.meteor.com/api/tracker.html) system that supports deep dependency tracking.
 
 ## Reasoning:
 This package was created with the goal of offering a similar interface to ReactiveDict, but without the complications of being based around EJSON.
