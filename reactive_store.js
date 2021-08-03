@@ -12,7 +12,9 @@ import {
  * 
  * @typedef DepNode - Dependency node object.
  * @type {Object}
- * @property {Tracker.Dependency} [dep] - Tracker dependency associated with this node.
+ * @property {Tracker.Dependency} [dep] - Associated store path value Tracker dependency.
+ * @property {Tracker.Dependency} [existsDep] - Associated store path value existence Tracker dependency.
+ * @property <Map.<any, Tracker.Dependency>> [eqDepMap] - Associated store path value equality Tracker dependencies.
  * @property {Object.<string, DepNode>} subDeps - Map of subKeys -> subDepNodes
  * 
  * @typedef Mutator - Assignment mutator function.
